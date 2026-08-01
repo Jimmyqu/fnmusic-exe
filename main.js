@@ -125,12 +125,11 @@ function createWindow() {
 
   mainWindow.once('ready-to-show', () => mainWindow.show());
 
-  // 远程页面加载完成后，注入顶部可拖拽条 + 顶部内边距，避免页面内容被覆盖层按钮遮挡
+  // 远程页面加载完成后，注入顶部可拖拽条（浮于页面之上，不占用布局空间，避免底部被裁）
   mainWindow.webContents.on('did-finish-load', () => {
     const currentUrl = mainWindow.webContents.getURL();
     if (!/^https?:/i.test(currentUrl)) return; // 仅对远程服务器页面注入
     mainWindow.webContents.insertCSS(`
-      html { padding-top: 36px !important; box-sizing: border-box; }
       body { -webkit-app-region: no-drag; }
       .__fn-dragbar {
         position: fixed !important;
