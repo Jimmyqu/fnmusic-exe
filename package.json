@@ -1,0 +1,60 @@
+{
+  "name": "feiniu-music",
+  "version": "1.3.0",
+  "description": "飞牛音乐客户端",
+  "main": "main.js",
+  "author": "飞牛音乐",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win",
+    "dist:portable": "electron-builder --win portable"
+  },
+  "devDependencies": {
+    "electron": "^28.3.3",
+    "electron-builder": "^24.13.3",
+    "jimp": "^0.22.12",
+    "png-to-ico": "^2.1.4"
+  },
+  "build": {
+    "appId": "com.feiniu.music",
+    "productName": "飞牛音乐",
+    "copyright": "Copyright © 2026 飞牛音乐",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "electronDist": "node_modules/electron/dist",
+    "files": [
+      "main.js",
+      "package.json",
+      "preload.js",
+      "setup.html",
+      "setup.js",
+      "build/icon.png",
+      "build/icon.ico"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico",
+      "artifactName": "${productName}-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "飞牛音乐",
+      "deleteAppDataOnUninstall": false
+    }
+  }
+}
