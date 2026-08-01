@@ -72,6 +72,16 @@ function normalizeUrl(input) {
   }
 }
 
+// 校验服务器地址路径必须以 /music 或 /music/ 结尾
+function isValidMusicPath(url) {
+  try {
+    const u = new URL(url);
+    return /\/music\/?$/.test(u.pathname);
+  } catch {
+    return false;
+  }
+}
+
 let mainWindow = null;
 let tray = null;
 // 是否处于「真正退出」流程：托盘右键退出 / window-all-closed 时置 true，
@@ -239,6 +249,9 @@ ipcMain.handle('submit-server', async (event, rawUrl) => {
   const url = normalizeUrl(rawUrl);
   if (!url) {
     return { ok: false, error: '地址无效，请检查后重试' };
+  }
+  if (!isValidMusicPath(url)) {
+    return { ok: false, error: '地址需以 /music 或 /music/ 结尾' };
   }
   loadServer(url);
   return { ok: true };

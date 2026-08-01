@@ -77,7 +77,7 @@ npm run dist:portable
 
 ## 版本号
 
-当前版本：**v1.4.0**
+当前版本：**v1.5.0**
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)（Semantic Versioning）：
 
@@ -88,6 +88,10 @@ npm run dist:portable
 版本号同步维护在 [package.json](package.json) 的 `version` 字段。
 
 ## 更新日志
+
+### v1.5.0
+
+- 服务器地址校验：输入地址必须以 `/music` 或 `/music/` 结尾，否则不跳转并提示用户
 
 ### v1.4.0
 
