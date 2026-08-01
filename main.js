@@ -95,7 +95,7 @@ function createWindow() {
     minWidth: 1024,
     minHeight: 680,
     title: '飞牛音乐',
-    backgroundColor: '#0f0f0f',
+    backgroundColor: '#00000000',
     show: false,
     autoHideMenuBar: true,
     // 无边框客户端外观：隐藏标题栏，保留原生最小化/最大化/关闭按钮（右上角覆盖层）
@@ -105,7 +105,7 @@ function createWindow() {
     maximizable: false,
     titleBarStyle: 'hidden',
     titleBarOverlay: {
-      color: '#0f0f17',
+      color: '#00000000',
       symbolColor: '#e8e8f0',
       height: 36
     },
