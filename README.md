@@ -77,7 +77,7 @@ npm run dist:portable
 
 ## 版本号
 
-当前版本：**v1.5.0**
+当前版本：**v1.5.1**
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)（Semantic Versioning）：
 
@@ -88,6 +88,11 @@ npm run dist:portable
 版本号同步维护在 [package.json](package.json) 的 `version` 字段。
 
 ## 更新日志
+
+### v1.5.1
+
+- 窗口启动背景与右上角叉叉按钮覆盖层底色改为透明，启动后顶部不再有黑色遮挡
+- 修复顶部拖拽条 padding 注入导致页面内部 `100vh` 布局被裁切、底部播放控制栏（上一首 / 下一首）溢出窗口边界的问题，改为纯浮动拖拽条不占布局空间
 
 ### v1.5.0
 
