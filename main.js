@@ -72,13 +72,16 @@ function normalizeUrl(input) {
   }
 }
 
-// 校验服务器地址路径必须以 /music 或 /music/ 结尾
-function isValidMusicPath(url) {
+// 自动补 /music 后缀：已以 /music 或 /music/ 结尾则原样返回，否则末尾追加 /music
+function ensureMusicSuffix(url) {
   try {
     const u = new URL(url);
-    return /\/music\/?$/.test(u.pathname);
+    if (/\/music\/?$/.test(u.pathname)) return u.href;
+    const path = u.pathname.replace(/\/+$/, '');
+    u.pathname = path + '/music';
+    return u.href;
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -243,16 +246,17 @@ function resetServerData() {
   getSession().clearStorageData().catch(() => {});
 }
 
-// 设置页提交服务器地址
+// 设置页提交服务器地址：不以 /music 结尾则自动补 /music
 ipcMain.handle('submit-server', async (event, rawUrl) => {
   const url = normalizeUrl(rawUrl);
   if (!url) {
     return { ok: false, error: '地址无效，请检查后重试' };
   }
-  if (!isValidMusicPath(url)) {
-    return { ok: false, error: '地址需以 /music 或 /music/ 结尾' };
+  const finalUrl = ensureMusicSuffix(url);
+  if (!finalUrl) {
+    return { ok: false, error: '地址格式无效' };
   }
-  loadServer(url);
+  loadServer(finalUrl);
   return { ok: true };
 });
 

@@ -29,11 +29,6 @@
         input.focus();
         return;
       }
-      if (!/\/music\/?$/i.test(url)) {
-        setMsg('地址需以 /music 或 /music/ 结尾', true);
-        input.focus();
-        return;
-      }
       btn.disabled = true;
       btn.textContent = '连接中...';
       setMsg('');
