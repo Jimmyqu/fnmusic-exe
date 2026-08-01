@@ -90,6 +90,9 @@ function createWindow() {
     autoHideMenuBar: true,
     // 无边框客户端外观：隐藏标题栏，保留原生最小化/最大化/关闭按钮（右上角覆盖层）
     frame: false,
+    // 仅保留关闭按钮（叉叉 = 最小化到托盘），隐藏最小化 / 最大化按钮
+    minimizable: false,
+    maximizable: false,
     titleBarStyle: 'hidden',
     titleBarOverlay: {
       color: '#0f0f17',
@@ -221,6 +224,16 @@ function loadSetup() {
   }
 }
 
+// 重置：清空服务器地址配置与所有持久化存储（cookies / localStorage 等），回到设置页重新填写
+function resetServerData() {
+  try {
+    fs.unlinkSync(getConfigPath());
+  } catch {}
+  allowedOrigin = null;
+  loadSetup();
+  getSession().clearStorageData().catch(() => {});
+}
+
 // 设置页提交服务器地址
 ipcMain.handle('submit-server', async (event, rawUrl) => {
   const url = normalizeUrl(rawUrl);
@@ -249,6 +262,14 @@ function createTray() {
     {
       label: '显示主窗口',
       click: () => showMainWindow()
+    },
+    { type: 'separator' },
+    {
+      label: '重置地址',
+      click: () => {
+        resetServerData();
+        showMainWindow();
+      }
     },
     { type: 'separator' },
     {
