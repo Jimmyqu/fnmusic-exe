@@ -18,7 +18,7 @@
   },
   "build": {
     "appId": "com.feiniu.music",
-    "productName": "飞牛音乐",
+    "productName": "fnmusic",
     "copyright": "Copyright © 2026 飞牛音乐",
     "directories": {
       "output": "dist",
