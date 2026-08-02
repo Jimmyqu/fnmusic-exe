@@ -1,6 +1,7 @@
-const { app, BrowserWindow, shell, session, Menu, ipcMain, Tray, nativeImage } = require('electron');
+const { app, BrowserWindow, shell, session, Menu, ipcMain, Tray, nativeImage, net } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 
 // 伪装成普通 Chrome 浏览器的 User-Agent，避免被站点拦截
 const UA =
@@ -17,6 +18,17 @@ function getSession() {
 // 让会话 cookie（无过期时间）也持久化保存，避免重启后需要重新登录
 function setupCookiePersistence() {
   const ses = getSession();
+
+  // 对 fnos.net 中转域名和 NAS 直连 IP 放行 SSL 证书验证
+  // fnos.net 证书可能过期（ERR_CERT_DATE_INVALID），NAS 自签证书也会被拒绝
+  ses.setCertificateVerifyProc((request, callback) => {
+    const { hostname } = request;
+    if (hostname.endsWith('.fnos.net') || /^\d+\.\d+\.\d+\.\d+$/.test(hostname)) {
+      callback(0); // 接受证书
+    } else {
+      callback(-2); // 使用 Chromium 默认验证
+    }
+  });
   ses.cookies.on('changed', (_e, cookie, _cause, removed) => {
     if (removed) return;
     // 仅处理「会话型」cookie（没有 expirationDate）
@@ -79,6 +91,127 @@ function normalizeUrl(input) {
   } catch {
     return null;
   }
+}
+
+// ===== fnid 解析（通过 fnos.net 远程访问 API 获取真实服务器地址）=====
+// 逆向自 fnos.net 前端 JS，API 需同时携带两套签名
+const FNOS_PREFIX = 'NDzZTVxnRKP8Z0jXg1VAMonaG8akvh';
+const FNOS_API_KEY = 'zIGtkc3dqZnJpd29qZXJqa2w7c';
+const FNOS_API_PATH = '/api/v1/fn/con';
+const FNOS_API_URL = 'https://fnos.net' + FNOS_API_PATH;
+
+// 判断输入是否为 fnid：不含 . / : 且不带协议的短字符串
+function isFnid(input) {
+  const s = (input || '').trim();
+  if (!s) return false;
+  if (/^https?:\/\//i.test(s)) return false; // 带协议的是网址
+  if (/[.\/:]/.test(s)) return false;        // 含 . / : 视为网址/IP
+  return /^[a-zA-Z0-9_-]+$/.test(s);          // 仅字母数字下划线短横
+}
+
+// 通过 fnid 调用 fnos.net API 解析真实服务器地址
+// 返回候选地址列表（按优先级排序）：局域网 http > 公网 http > relay https 兜底
+// API 返回数据示例：
+//   { ipv4: ["192.168.5.18"], publicIpv4: ["39.186.22.84"], fn: ["srtv666.fnos.net:443"],
+//     port: { httpPort: 40710, httpsPort: 40711 } }
+async function resolveFnid(fnid) {
+  const md5 = (s) => crypto.createHash('md5').update(s).digest('hex');
+  const sha256 = (s) => crypto.createHash('sha256').update(s).digest('hex');
+
+  // fn-sign：基于 fnid + 当前时间戳的 sha256
+  const tsFn = Date.now();
+  const fnSign = sha256(`trim_connect\`${fnid}\`${tsFn}\`anna`);
+
+  // authx：基于 PREFIX + url + nonce + ts + md5(body) + apiKey 的 md5
+  const body = JSON.stringify({ fnId: fnid });
+  const nonce = (Math.floor(Math.random() * 9e5) + 1e5).toString().padStart(6, '0');
+  const tsAx = Date.now();
+  const authxSign = md5([FNOS_PREFIX, FNOS_API_PATH, nonce, tsAx, md5(body), FNOS_API_KEY].join('_'));
+  const authx = `nonce=${nonce}&timestamp=${tsAx}&sign=${authxSign}`;
+
+  // 用 Promise.race 加超时，防止网络挂起导致前端永远卡在"连接中"
+  const withTimeout = (p, ms) =>
+    Promise.race([
+      p,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms))
+    ]);
+
+  try {
+    const resp = await withTimeout(fetch(FNOS_API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'fn-sign': fnSign,
+        'authx': authx,
+        'User-Agent': UA
+      },
+      body
+    }), 10000);
+    const json = await withTimeout(resp.json(), 5000);
+    if (!json || json.code !== 0 || !json.data) return null;
+
+    const d = json.data;
+    const httpPort = d.port && d.port.httpPort;
+    const candidates = [];
+
+    // 1. 局域网 http（优先级最高，局域网内最快，无证书问题）
+    if (httpPort) {
+      (d.ipv4 || []).forEach((ip) => {
+        candidates.push(`http://${ip}:${httpPort}`);
+      });
+      // 2. 公网 http 直连（无证书问题）
+      (d.publicIpv4 || []).forEach((ip) => {
+        candidates.push(`http://${ip}:${httpPort}`);
+      });
+    }
+
+    // 3. relay https 中转（兜底，fnos.net 域名，证书可能过期需 session 放行）
+    (d.fn || []).forEach((fn) => {
+      const m = fn.match(/^([^:]+):(\d+)$/);
+      if (m) {
+        const host = m[1];
+        const port = parseInt(m[2], 10);
+        candidates.push(port === 443 ? `https://${host}` : `https://${host}:${port}`);
+      } else {
+        candidates.push(`https://${fn}`);
+      }
+    });
+
+    return candidates.length > 0 ? candidates : null;
+  } catch (e) {
+    console.error('resolveFnid error:', e.message);
+    return null;
+  }
+}
+
+// 并发探测候选地址，返回第一个成功响应的 URL
+// http 候选用 Node fetch 探测；https relay 探测可能因证书失败，直接跳过交由 BrowserWindow 加载
+async function probeCandidates(candidates) {
+  const withTimeout = (p, ms) =>
+    Promise.race([
+      p,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms))
+    ]);
+
+  // 分离 http 候选（可探测）和 https 兜底（不探测，直接用）
+  const httpCandidates = candidates.filter((u) => u.startsWith('http://'));
+  const httpsFallback = candidates.find((u) => u.startsWith('https://'));
+
+  // 并发探测所有 http 候选，谁先成功用谁
+  if (httpCandidates.length > 0) {
+    try {
+      const winner = await Promise.any(httpCandidates.map(async (url) => {
+        const resp = await withTimeout(fetch(url, { method: 'GET', redirect: 'manual' }), 5000);
+        // 任何 HTTP 响应（含 401/404/302）都说明地址可达
+        return url;
+      }));
+      return winner;
+    } catch {
+      // 所有 http 候选都失败，走 https 兜底
+    }
+  }
+
+  return httpsFallback || null;
 }
 
 // 自动补 /music 后缀：已以 /music 或 /music/ 结尾则原样返回，否则末尾追加 /music
@@ -255,9 +388,33 @@ function resetServerData() {
   getSession().clearStorageData().catch(() => {});
 }
 
-// 设置页提交服务器地址：不以 /music 结尾则自动补 /music
+// 设置页提交服务器地址：fnid 优先解析，网址则规范化后补 /music
 ipcMain.handle('submit-server', async (event, rawUrl) => {
-  const url = normalizeUrl(rawUrl);
+  const input = (rawUrl || '').trim();
+  if (!input) {
+    return { ok: false, error: '请输入服务器地址' };
+  }
+
+  // fnid 分支：调用 fnos.net API 解析候选地址，并发探测选最优
+  if (isFnid(input)) {
+    const candidates = await resolveFnid(input);
+    if (!candidates || candidates.length === 0) {
+      return { ok: false, error: 'fnid 解析失败，请检查或使用网址登录' };
+    }
+    const selected = await probeCandidates(candidates);
+    if (!selected) {
+      return { ok: false, error: '所有候选地址均不可达，请检查网络或使用网址登录' };
+    }
+    const finalUrl = ensureMusicSuffix(selected);
+    if (!finalUrl) {
+      return { ok: false, error: '解析到的地址格式无效' };
+    }
+    loadServer(finalUrl);
+    return { ok: true };
+  }
+
+  // 网址分支：规范化 + 补 /music
+  const url = normalizeUrl(input);
   if (!url) {
     return { ok: false, error: '地址无效，请检查后重试' };
   }

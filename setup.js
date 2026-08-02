@@ -38,8 +38,16 @@
           setMsg((res && res.error) || '连接失败，请检查地址', true);
           btn.disabled = false;
           btn.textContent = '连接';
+        } else {
+          // 成功：主进程会加载远程页面跳转。加 15 秒兜底，若页面仍未跳转则恢复按钮
+          setTimeout(function () {
+            if (document.getElementById('btn')) {
+              btn.disabled = false;
+              btn.textContent = '连接';
+              setMsg('连接超时，请检查服务器是否在线', true);
+            }
+          }, 15000);
         }
-        // 成功则主进程会跳转页面，无需在此处理
       } catch (err) {
         setMsg('发生错误：' + (err.message || err), true);
         btn.disabled = false;

@@ -79,7 +79,7 @@ npm run dist:portable
 
 ## 版本号
 
-当前版本：**v1.5.4**
+当前版本：**v1.6.0**
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)（Semantic Versioning）：
 
@@ -90,6 +90,16 @@ npm run dist:portable
 版本号同步维护在 [package.json](package.json) 的 `version` 字段。
 
 ## 更新日志
+
+### v1.6.0
+
+- 新增 fnid 登录支持：输入 fnid（如 `srtv666`）自动通过 `fnos.net` API 解析真实服务器地址
+- 局域网 / 外网智能适配：fnid 解析返回多个候选地址（局域网 IP、公网 IP、relay 中转），并发探测选最优可达地址
+  - 局域网内优先用局域网 IP 直连（http，最快）
+  - 外网用公网 IP 直连（http）
+  - 都不通时用 fnos.net 中转（https 兜底）
+- 放行 `*.fnos.net` 中转域名与 NAS 直连 IP 的 SSL 证书验证，解决证书过期 / 自签证书导致无法加载的问题（`ERR_CERT_DATE_INVALID`）
+- fnid 解析与探测均加超时兜底，避免网络挂起导致界面卡在"连接中"
 
 ### v1.5.4
 
