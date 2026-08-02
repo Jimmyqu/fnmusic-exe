@@ -79,7 +79,7 @@ npm run dist:portable
 
 ## 版本号
 
-当前版本：**v1.5.3**
+当前版本：**v1.5.4**
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)（Semantic Versioning）：
 
@@ -90,6 +90,12 @@ npm run dist:portable
 版本号同步维护在 [package.json](package.json) 的 `version` 字段。
 
 ## 更新日志
+
+### v1.5.4
+
+- 服务器地址输入页面新增项目来源链接（`https://github.com/wbc389561407/fnmusic-exe`）
+- 调整地址输入逻辑：纯 IP 自动补 `http://` 与 `:5666` 默认端口；带协议 / 带端口则完全尊重用户输入
+- 应用单实例锁：重复双击桌面图标不再启动多个程序，改为聚焦到已有窗口
 
 ### v1.5.3
 

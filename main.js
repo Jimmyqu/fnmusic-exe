@@ -379,17 +379,29 @@ function buildMenu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
-app.whenReady().then(() => {
-  setupCookiePersistence();
-  buildMenu();
-  createTray();
-  createWindow();
-
-  app.on('activate', () => {
-    // macOS 点击 dock 图标时，若窗口被隐藏则重新显示
+// 单实例锁：防止重复启动多个程序实例
+const gotTheLock = app.requestSingleInstanceLock();
+if (!gotTheLock) {
+  // 已有实例在运行，当前实例直接退出
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    // 用户再次双击图标尝试启动第二个实例：聚焦到已有窗口
     showMainWindow();
   });
-});
+
+  app.whenReady().then(() => {
+    setupCookiePersistence();
+    buildMenu();
+    createTray();
+    createWindow();
+
+    app.on('activate', () => {
+      // macOS 点击 dock 图标时，若窗口被隐藏则重新显示
+      showMainWindow();
+    });
+  });
+}
 
 // 退出前强制写入 cookie 存储，确保登录态落盘
 let quitting = false;
