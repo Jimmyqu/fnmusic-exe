@@ -1,6 +1,9 @@
 # fnmusic-exe · 飞牛音乐客户端
 
 > 基于 Electron 封装的飞牛音乐客户端，核心解决网页版无法后台播放、最小化后切歌中断的痛点。
+
+项目来源：https://github.com/wbc389561407/fnmusic-exe
+
 ![img_1.png](img_1.png)
 
 ## 立项初衷
@@ -76,7 +79,7 @@ npm run dist:portable
 
 ## 版本号
 
-当前版本：**v1.5.1**
+当前版本：**v1.5.3**
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)（Semantic Versioning）：
 
@@ -87,6 +90,14 @@ npm run dist:portable
 版本号同步维护在 [package.json](package.json) 的 `version` 字段。
 
 ## 更新日志
+
+### v1.5.3
+
+- 服务器地址输入不以 `/music` 或 `/music/` 结尾时，自动补全 `/music` 后缀，不再弹错误提示拦截
+
+### v1.5.2
+
+- 不带协议的地址默认按 `http` 访问，解决 http 流量被强制升级到 https 导致不通的问题
 
 ### v1.5.1
 

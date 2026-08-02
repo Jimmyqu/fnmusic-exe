@@ -60,13 +60,22 @@ function writeConfig(cfg) {
   fs.writeFileSync(getConfigPath(), JSON.stringify(cfg, null, 2), 'utf-8');
 }
 
-// 规范化地址：补协议、去首尾空格
+// 规范化地址：
+// - 不带协议的纯 IP / 主机名 → 默认补 http:// 与 :5666 端口（飞牛 NAS 默认端口）
+// - 带协议 / 带端口 → 完全尊重用户输入，不覆盖
+// - 去首尾空格
 function normalizeUrl(input) {
   let url = (input || '').trim();
   if (!url) return null;
-  if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
+  const hasProto = /^https?:\/\//i.test(url);
+  if (!hasProto) url = 'http://' + url;
   try {
-    return new URL(url).href;
+    const u = new URL(url);
+    // 仅「不带协议」场景补默认端口 5666；带协议的地址不干预端口
+    if (!hasProto && !u.port) {
+      u.port = '5666';
+    }
+    return u.href;
   } catch {
     return null;
   }

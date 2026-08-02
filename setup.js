@@ -46,6 +46,15 @@
         btn.textContent = '连接';
       }
     });
+
+    // 仓库链接点击：交给主进程 setWindowOpenHandler → shell.openExternal 用系统浏览器打开
+    var repoLink = document.getElementById('repo-link');
+    if (repoLink) {
+      repoLink.addEventListener('click', function (e) {
+        e.preventDefault();
+        window.open(repoLink.href);
+      });
+    }
   }
 
   if (document.readyState === 'loading') {
