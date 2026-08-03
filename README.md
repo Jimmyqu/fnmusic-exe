@@ -79,7 +79,7 @@ npm run dist:portable
 
 ## 版本号
 
-当前版本：**v2.1.4**
+当前版本：**v2.1.5**
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)（Semantic Versioning）：
 
@@ -90,6 +90,12 @@ npm run dist:portable
 版本号同步维护在 [package.json](package.json) 的 `version` 字段。
 
 ## 更新日志
+
+### v2.1.5
+
+- 修复打包后设置页报「初始化失败：桥接对象不可用」的问题
+  - 根因：preload 在 `sandbox: true` 下 `require('../package.json')` 会抛错，导致整个 preload 脚本执行失败、`serverBridge` 未暴露
+  - 修复：版本号改由主进程 `app.getVersion()` 通过 IPC `get-app-version` 提供，preload 不再 require 本地文件
 
 ### v2.1.4
 

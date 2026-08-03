@@ -510,6 +510,9 @@ ipcMain.handle('submit-server', async (event, rawUrl) => {
   return { ok: true };
 });
 
+// 返回应用版本号（sandbox 渲染进程无法 require package.json，由主进程提供）
+ipcMain.handle('get-app-version', () => app.getVersion());
+
 // 创建托盘图标与右键菜单
 function createTray() {
   const iconPath = path.join(__dirname, 'build', 'icon.ico');
