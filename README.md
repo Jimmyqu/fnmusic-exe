@@ -79,7 +79,7 @@ npm run dist:portable
 
 ## 版本号
 
-当前版本：**v2.1.5**
+当前版本：**v2.1.6**
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)（Semantic Versioning）：
 
@@ -90,6 +90,10 @@ npm run dist:portable
 版本号同步维护在 [package.json](package.json) 的 `version` 字段。
 
 ## 更新日志
+
+### v2.1.6
+
+- 修复开机自启后出现额外窗口的问题：禁止页面 `window.open` 新建窗口，所有外部链接改用系统浏览器打开
 
 ### v2.1.5
 

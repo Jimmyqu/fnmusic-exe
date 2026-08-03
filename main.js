@@ -331,10 +331,8 @@ function createWindow() {
 
   // 站内新窗口放行，站外用系统默认浏览器打开
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    const allowed = getAllowedOrigin();
-    if (isNavigationAllowed(url, allowed)) {
-      return { action: 'allow' };
-    }
+    // 禁止任何 window.open 新建窗口（避免页面弹出的额外窗口）
+    // 同源链接用系统浏览器打开，跨域链接也用系统浏览器打开
     if (url) shell.openExternal(url);
     return { action: 'deny' };
   });
@@ -527,10 +525,23 @@ function createTray() {
   tray = new Tray(trayIcon);
   tray.setToolTip('飞牛音乐');
 
-  const contextMenu = Menu.buildFromTemplate([
+  // 构建托盘右键菜单（每次构建都读取最新开机自启状态，确保勾选正确）
+  const buildTrayMenu = () => Menu.buildFromTemplate([
     {
       label: '显示主窗口',
       click: () => showMainWindow()
+    },
+    { type: 'separator' },
+    {
+      label: '开机自启',
+      type: 'checkbox',
+      checked: app.getLoginItemSettings().openAtLogin,
+      click: (menuItem) => {
+        // 切换开机自启状态
+        app.setLoginItemSettings({ openAtLogin: menuItem.checked });
+        // 重新构建菜单刷新勾选状态
+        tray.setContextMenu(buildTrayMenu());
+      }
     },
     { type: 'separator' },
     {
@@ -565,7 +576,7 @@ function createTray() {
     }
   ]);
 
-  tray.setContextMenu(contextMenu);
+  tray.setContextMenu(buildTrayMenu());
 
   // 单击托盘图标：显示/隐藏主窗口
   tray.on('click', () => showMainWindow());
