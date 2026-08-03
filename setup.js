@@ -21,6 +21,12 @@
       return;
     }
 
+    // 显示应用版本号
+    var versionEl = document.getElementById('app-version');
+    if (versionEl && window.serverBridge.version) {
+      versionEl.textContent = 'v' + window.serverBridge.version;
+    }
+
     form.addEventListener('submit', async function (e) {
       e.preventDefault();
       var url = input.value.trim();

@@ -79,7 +79,7 @@ npm run dist:portable
 
 ## 版本号
 
-当前版本：**v2.1.0**
+当前版本：**v2.1.4**
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)（Semantic Versioning）：
 
@@ -90,6 +90,12 @@ npm run dist:portable
 版本号同步维护在 [package.json](package.json) 的 `version` 字段。
 
 ## 更新日志
+
+### v2.1.4
+
+- 设置页新增版本号显示（标题下方）
+- 托盘右键菜单新增「关于」项：弹窗显示版本号、项目简介、项目地址与声明
+- 安装包文件名由 `飞牛音乐-Setup-x.x.x.exe` 改为 `fnmusic-Setup-x.x.x.exe`
 
 ### v2.1.0
 
