@@ -79,7 +79,7 @@ npm run dist:portable
 
 ## 版本号
 
-当前版本：**v2.0.0**
+当前版本：**v2.1.0**
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)（Semantic Versioning）：
 
@@ -90,6 +90,26 @@ npm run dist:portable
 版本号同步维护在 [package.json](package.json) 的 `version` 字段。
 
 ## 更新日志
+
+### v2.1.0
+
+- **fnid 解析重构**：恢复通过 fnos.net API 解析真实服务器地址，不再直接走中继地址
+  - 输入 fnid 后调用 `fnos.net` 远程访问 API 获取候选地址列表
+  - 候选地址优先级：局域网 http（最快，无证书问题）> fnos.net 中继 https（兜底）
+  - 移除公网 IP 直连分支（家庭网络绝大多数无公网 IP，直连意义不大）
+  - 局域网 http 候选**顺序探测**（非并发），第一个可达即用；全不通则用 https 中继兜底
+  - https 中继不做主动探测（证书可能过期 fetch 失败），直接交由 BrowserWindow 加载
+- **修复 fnid 在局域网跳出 app 框架的问题**：
+  - 根因：之前直接构造 `https://{fnid}.fnos.net/music/` 中继地址，在局域网环境下中继会 302 重定向到 NAS 局域网 IP，触发跨域后被 `will-navigate` 丢到系统浏览器
+  - 修复：fnid 现在先探测局域网 IP，局域网通就直接用局域网 IP 加载，避免中继重定向跨域
+- **`isNavigationAllowed` 增强**：
+  - 放行 fnos.net 中继 → 私网 IP 的重定向（兜底防御，避免重定向被拦截）
+  - 放行局域网 IP origin 同 IP 不同端口的导航（NAS 站内跳端口登录等场景）
+- **`will-navigate` 跨域处理调整**：跨域导航仅 `preventDefault` 阻止，不再调用 `shell.openExternal`
+  - 页面内部重定向已由 `isNavigationAllowed` 放行
+  - 用户点击外链走 `setWindowOpenHandler`（target=_blank）转交系统浏览器
+  - 避免页面内部跨域导航被错误地弹出到外部浏览器
+- 新增 `isPrivateIp` 辅助函数：识别 10.x / 172.16-31.x / 192.168.x / 127.x / 169.254.x 私网段
 
 ### v2.0.0
 

@@ -1,6 +1,7 @@
 const { app, BrowserWindow, shell, session, Menu, ipcMain, Tray, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 
 // 伪装成普通 Chrome 浏览器的 User-Agent，避免被站点拦截
 const UA =
@@ -86,8 +87,14 @@ function normalizeUrl(input) {
   }
 }
 
-// ===== fnid 访问（通过 fnos.net 中继）=====
-// fnid 直接走中继地址 https://{fnid}.fnos.net/music，无需调用 API 解析候选
+// ===== fnid 解析（通过 fnos.net 远程访问 API 获取真实服务器地址）=====
+// 逆向自 fnos.net 前端 JS，API 需同时携带两套签名
+// 候选地址优先级：局域网 http（最快，无证书问题）> fnos.net 中继 https（兜底）
+// 不考虑公网 IP 直连（家庭网络绝大多数无公网 IP，且公网 IP 直连意义不大）
+const FNOS_PREFIX = 'NDzZTVxnRKP8Z0jXg1VAMonaG8akvh';
+const FNOS_API_KEY = 'zIGtkc3dqZnJpd29qZXJqa2w7c';
+const FNOS_API_PATH = '/api/v1/fn/con';
+const FNOS_API_URL = 'https://fnos.net' + FNOS_API_PATH;
 
 // 判断输入是否为 fnid：不含 . / : 且不带协议的短字符串
 function isFnid(input) {
@@ -98,18 +105,131 @@ function isFnid(input) {
   return /^[a-zA-Z0-9_-]+$/.test(s);          // 仅字母数字下划线短横
 }
 
-// 统一解析用户输入为可访问地址
-// - fnid：构造中继地址 https://{fnid}.fnos.net/music/
+// 通过 fnid 调用 fnos.net API 解析真实服务器地址
+// 返回候选地址列表（按优先级排序）：局域网 http > fnos.net 中继 https 兜底
+// API 返回数据示例：
+//   { ipv4: ["192.168.x.x"], publicIpv4: ["x.x.x.x"], fn: ["your-fnid.fnos.net:443"],
+//     port: { httpPort: 40710, httpsPort: 40711 } }
+async function resolveFnid(fnid) {
+  const md5 = (s) => crypto.createHash('md5').update(s).digest('hex');
+  const sha256 = (s) => crypto.createHash('sha256').update(s).digest('hex');
+
+  // fn-sign：基于 fnid + 当前时间戳的 sha256
+  const tsFn = Date.now();
+  const fnSign = sha256(`trim_connect\`${fnid}\`${tsFn}\`anna`);
+
+  // authx：基于 PREFIX + url + nonce + ts + md5(body) + apiKey 的 md5
+  const body = JSON.stringify({ fnId: fnid });
+  const nonce = (Math.floor(Math.random() * 9e5) + 1e5).toString().padStart(6, '0');
+  const tsAx = Date.now();
+  const authxSign = md5([FNOS_PREFIX, FNOS_API_PATH, nonce, tsAx, md5(body), FNOS_API_KEY].join('_'));
+  const authx = `nonce=${nonce}&timestamp=${tsAx}&sign=${authxSign}`;
+
+  // 用 Promise.race 加超时，防止网络挂起导致前端永远卡在"连接中"
+  const withTimeout = (p, ms) =>
+    Promise.race([
+      p,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms))
+    ]);
+
+  try {
+    const resp = await withTimeout(fetch(FNOS_API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'fn-sign': fnSign,
+        'authx': authx,
+        'User-Agent': UA
+      },
+      body
+    }), 10000);
+    const json = await withTimeout(resp.json(), 5000);
+    console.log('[resolveFnid] api response code:', json && json.code);
+    if (!json || json.code !== 0 || !json.data) return null;
+
+    const d = json.data;
+    const httpPort = d.port && d.port.httpPort;
+    const candidates = [];
+
+    // 1. 局域网 http（优先级最高，局域网内最快，无证书问题）
+    if (httpPort) {
+      (d.ipv4 || []).forEach((ip) => {
+        candidates.push(`http://${ip}:${httpPort}`);
+      });
+    }
+
+    // 2. fnos.net 中继 https（兜底，跨网段时使用）
+    (d.fn || []).forEach((fn) => {
+      const m = fn.match(/^([^:]+):(\d+)$/);
+      if (m) {
+        const host = m[1];
+        const port = parseInt(m[2], 10);
+        candidates.push(port === 443 ? `https://${host}` : `https://${host}:${port}`);
+      } else {
+        candidates.push(`https://${fn}`);
+      }
+    });
+
+    console.log('[resolveFnid] candidates:', candidates);
+    return candidates.length > 0 ? candidates : null;
+  } catch (e) {
+    console.error('[resolveFnid] error:', e.message);
+    return null;
+  }
+}
+
+// 顺序探测候选地址：先逐个尝试局域网 http，通则用；全不通则用 https 中继兜底
+// 注意：https 中继不做主动探测（证书可能过期，fetch 会失败），直接交由 BrowserWindow 加载
+async function probeCandidates(candidates) {
+  const withTimeout = (p, ms) =>
+    Promise.race([
+      p,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms))
+    ]);
+
+  const httpCandidates = candidates.filter((u) => u.startsWith('http://'));
+  const httpsFallback = candidates.find((u) => u.startsWith('https://'));
+
+  // 顺序逐个探测局域网 http 候选，第一个可达即返回
+  for (const url of httpCandidates) {
+    try {
+      // 任何 HTTP 响应（含 401/404/302）都说明地址可达
+      await withTimeout(fetch(url, { method: 'GET', redirect: 'manual' }), 5000);
+      console.log('[probeCandidates] lan reachable:', url);
+      return url;
+    } catch (e) {
+      console.log('[probeCandidates] lan failed:', url, e.message);
+    }
+  }
+
+  console.log('[probeCandidates] all lan failed, fallback to relay');
+  return httpsFallback || null;
+}
+
+// 统一解析用户输入为可访问地址（异步：fnid 分支需要调用远程 API）
+// - fnid：调 fnos.net API 获取候选 → 顺序探测局域网 → 不通再用中继
 // - IP / 网址：规范化 + 补 /music/
 // 返回 { url, error }，url 非空即可直接访问
-function resolveAccessUrl(input) {
+async function resolveAccessUrl(input) {
   const s = (input || '').trim();
   if (!s) return { url: null, error: '请输入服务器地址' };
 
   if (isFnid(s)) {
-    const url = `https://${s}.fnos.net/music/`;
-    console.log('[resolveAccessUrl] fnid ->', url);
-    return { url, error: null };
+    console.log('[resolveAccessUrl] fnid -> resolve via fnos.net API');
+    const candidates = await resolveFnid(s);
+    if (!candidates || candidates.length === 0) {
+      return { url: null, error: 'fnid 解析失败，请检查或使用网址登录' };
+    }
+    const selected = await probeCandidates(candidates);
+    if (!selected) {
+      return { url: null, error: '所有候选地址均不可达，请检查网络或使用网址登录' };
+    }
+    const finalUrl = ensureMusicSuffix(selected);
+    if (!finalUrl) {
+      return { url: null, error: '解析到的地址格式无效' };
+    }
+    console.log('[resolveAccessUrl] fnid ->', finalUrl);
+    return { url: finalUrl, error: null };
   }
 
   const url = normalizeUrl(s);
@@ -234,15 +354,16 @@ function createWindow() {
   });
 
   // 仅允许停留在当前服务器站内
-  // fnos.net 中继场景：子域名形式(your-fnid.fnos.net)与路径形式(fnos.net/your-fnid)会互转，
-  // 需放行整个 fnos.net 域内导航，避免重定向被拦截后丢到外部浏览器导致 app 内卡住
+  // 跨域导航直接阻止，不调用 shell.openExternal：
+  //  - 页面内部的重定向（如 fnos.net 中继 → NAS 局域网 IP）已由 isNavigationAllowed 放行
+  //  - 其他跨域导航通常是页面 a 标签跳转，应交给 setWindowOpenHandler（target=_blank）走系统浏览器
+  //  - 若此处也 openExternal，会发生"app 内被弹出到外部浏览器"的问题
   mainWindow.webContents.on('will-navigate', (event, url) => {
     const allowed = getAllowedOrigin();
     console.log('[will-navigate] url:', url, 'allowed:', allowed);
     if (allowed && !isNavigationAllowed(url, allowed)) {
-      console.log('[will-navigate] BLOCKED -> openExternal');
+      console.log('[will-navigate] BLOCKED');
       event.preventDefault();
-      if (url) shell.openExternal(url);
     }
   });
 
@@ -262,17 +383,18 @@ function createWindow() {
   });
 
   // 启动分支：读取用户原始输入，每次启动走一次 resolveAccessUrl 确认本次访问地址
-  // - 有 serverInput：解析为可访问地址并加载
+  // - 有 serverInput：异步解析为可访问地址并加载（fnid 需调 API + 探测）
   // - 没有：进入设置页
   const cfg = readConfig();
   if (cfg.serverInput) {
-    const { url, error } = resolveAccessUrl(cfg.serverInput);
-    if (url) {
-      applyServerUrl(url);
-    } else {
-      console.log('[startup] resolve failed:', error);
-      loadSetup();
-    }
+    resolveAccessUrl(cfg.serverInput).then(({ url, error }) => {
+      if (url) {
+        applyServerUrl(url);
+      } else {
+        console.log('[startup] resolve failed:', error);
+        loadSetup();
+      }
+    });
   } else {
     loadSetup();
   }
@@ -298,20 +420,41 @@ function getAllowedOrigin() {
   return allowedOrigin;
 }
 
+// 判断 IP 是否为私网地址（10.x / 172.16-31.x / 192.168.x / 127.x / 169.254.x）
+function isPrivateIp(ip) {
+  if (!ip) return false;
+  return (
+    ip === '127.0.0.1' ||
+    /^10\./.test(ip) ||
+    /^192\.168\./.test(ip) ||
+    /^169\.254\./.test(ip) ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(ip)
+  );
+}
+
 // 判断目标 url 是否允许在 app 内导航
 // 1. 同 origin 直接放行
-// 2. fnos.net 中继场景：子域名形式(your-fnid.fnos.net)与路径形式(fnos.net/your-fnid)会互相重定向，
-//    当已配置服务器为 fnos.net 中继时，放行整个 fnos.net 域内导航，避免重定向被拦截导致卡住
+// 2. fnos.net 中继场景：放行整个 fnos.net 域内导航（子域名 ↔ 路径形式互转）
+// 3. fnos.net 中继可能 302 重定向到 NAS 局域网 IP：放行私网 IP，避免重定向被丢到外部浏览器
+// 4. 局域网 IP origin 场景：放行同 IP 不同端口（NAS 站内跳端口登录等）
 function isNavigationAllowed(url, allowed) {
   if (!url || !allowed) return false;
   if (url.startsWith(allowed)) return true;
   try {
     const allowedHost = new URL(allowed).hostname;
     const navHost = new URL(url).hostname;
-    if (allowedHost === 'fnos.net' || allowedHost.endsWith('.fnos.net')) {
-      if (navHost === 'fnos.net' || navHost.endsWith('.fnos.net')) {
-        return true;
-      }
+    // fnos.net 域内互转
+    if ((allowedHost === 'fnos.net' || allowedHost.endsWith('.fnos.net')) &&
+        (navHost === 'fnos.net' || navHost.endsWith('.fnos.net'))) {
+      return true;
+    }
+    // fnos.net 中继 → 私网 IP 重定向放行
+    if ((allowedHost === 'fnos.net' || allowedHost.endsWith('.fnos.net')) && isPrivateIp(navHost)) {
+      return true;
+    }
+    // 局域网 IP origin：放行同 IP 不同端口
+    if (isPrivateIp(allowedHost) && navHost === allowedHost) {
+      return true;
     }
   } catch {}
   return false;
@@ -357,7 +500,7 @@ function resetServerData() {
 // 设置页提交服务器地址：统一走 resolveAccessUrl 解析，持久化用户原始输入
 ipcMain.handle('submit-server', async (event, rawUrl) => {
   const input = (rawUrl || '').trim();
-  const { url, error } = resolveAccessUrl(input);
+  const { url, error } = await resolveAccessUrl(input);
   if (!url) {
     return { ok: false, error };
   }
