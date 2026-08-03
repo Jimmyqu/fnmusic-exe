@@ -327,6 +327,93 @@ function createWindow() {
         document.documentElement.appendChild(d);
       })();
     `).catch(() => {});
+
+    // 自动播放：若配置开启，登录进入主界面后自动播放
+    // 策略（基于实际 DOM）：
+    //   1) 优先点击底部播放按钮 button[aria-label="播放"]
+    //   2) 若 3 秒内未开始播放，兜底：点侧边栏「音乐库」div → 再点「随机漫游」button
+    //   3) 兜底后再点一次播放按钮确保
+    const cfg = readConfig();
+    if (cfg.autoPlay) {
+      mainWindow.webContents.executeJavaScript(`
+        (function(){
+          if (window.__fnAutoPlayStarted) return;
+          // 仅在主界面启动（登录页 pathname 含 /login）
+          if (location.pathname.indexOf('/login') !== -1) return;
+          window.__fnAutoPlayStarted = true;
+
+          var state = 'idle';            // idle -> clicked_play -> fallback -> fallback_done
+          var stateChangedAt = Date.now();
+          var tries = 0;
+          var maxTries = 60;             // 最多轮询 30 秒
+
+          function getMedia(){ return document.querySelector('audio, video'); }
+          function isPlaying(){
+            var m = getMedia();
+            return !!m && !m.paused;
+          }
+          // 底部播放/暂停按钮（aria-label 随状态在"播放"/"暂停"间切换）
+          function clickPlayButton(){
+            var btn = document.querySelector('button[aria-label="播放"], button[aria-label="暂停"]');
+            if (btn) { btn.click(); return true; }
+            return false;
+          }
+          // 侧边栏「音乐库」导航项（div，文本恰为"音乐库"）
+          function clickMusicLibrary(){
+            var els = document.querySelectorAll('div, button, a, span');
+            for (var i = 0; i < els.length; i++){
+              var el = els[i];
+              if ((el.textContent || '').trim() === '音乐库' &&
+                  el.offsetParent !== null && el.getClientRects().length > 0){
+                el.click();
+                return true;
+              }
+            }
+            return false;
+          }
+          // 「随机漫游」按钮（aria-label / title 双重匹配）
+          function clickRandomPlay(){
+            var btn = document.querySelector('button[aria-label="随机漫游"], button[title="随机漫游"]');
+            if (btn) { btn.click(); return true; }
+            return false;
+          }
+
+          var timer = setInterval(function(){
+            tries++;
+            if (tries > maxTries) { clearInterval(timer); return; }
+
+            // 已在播放：结束
+            if (isPlaying()) { clearInterval(timer); return; }
+
+            if (state === 'idle'){
+              // 优先：直接点播放按钮
+              if (clickPlayButton()){
+                state = 'clicked_play';
+                stateChangedAt = Date.now();
+              }
+            } else if (state === 'clicked_play'){
+              // 等 3 秒，未播放则进入兜底
+              if (Date.now() - stateChangedAt > 3000){
+                state = 'fallback';
+                stateChangedAt = Date.now();
+              }
+            } else if (state === 'fallback'){
+              // 兜底：音乐库 div → 随机漫游 button → 再点播放按钮
+              clickMusicLibrary();
+              setTimeout(function(){
+                clickRandomPlay();
+                setTimeout(function(){ clickPlayButton(); }, 500);
+              }, 500);
+              state = 'fallback_done';
+              stateChangedAt = Date.now();
+            } else if (state === 'fallback_done'){
+              // 兜底后再观察 8 秒，仍未播放则放弃
+              if (Date.now() - stateChangedAt > 8000){ clearInterval(timer); }
+            }
+          }, 500);
+        })();
+      `).catch(() => {});
+    }
   });
 
   // 站内新窗口放行，站外用系统默认浏览器打开
@@ -525,7 +612,7 @@ function createTray() {
   tray = new Tray(trayIcon);
   tray.setToolTip('飞牛音乐');
 
-  // 构建托盘右键菜单（每次构建都读取最新开机自启状态，确保勾选正确）
+  // 构建托盘右键菜单（每次构建都读取最新状态，确保勾选正确）
   const buildTrayMenu = () => Menu.buildFromTemplate([
     {
       label: '显示主窗口',
@@ -539,6 +626,19 @@ function createTray() {
       click: (menuItem) => {
         // 切换开机自启状态
         app.setLoginItemSettings({ openAtLogin: menuItem.checked });
+        // 重新构建菜单刷新勾选状态
+        tray.setContextMenu(buildTrayMenu());
+      }
+    },
+    {
+      label: '打开自动播放',
+      type: 'checkbox',
+      checked: !!readConfig().autoPlay,
+      click: (menuItem) => {
+        // 切换自动播放配置并持久化
+        const cfg = readConfig();
+        cfg.autoPlay = menuItem.checked;
+        writeConfig(cfg);
         // 重新构建菜单刷新勾选状态
         tray.setContextMenu(buildTrayMenu());
       }
