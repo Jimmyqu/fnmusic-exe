@@ -328,11 +328,9 @@ function createWindow() {
       })();
     `).catch(() => {});
 
-    // 自动播放：若配置开启，登录进入主界面后自动播放
-    // 策略（基于实际 DOM）：
-    //   1) 优先点击底部播放按钮 button[aria-label="播放"]
-    //   2) 若 3 秒内未开始播放，兜底：点侧边栏「音乐库」div → 再点「随机漫游」button
-    //   3) 兜底后再点一次播放按钮确保
+    // 自动播放：若配置开启，进入主界面后点击底部播放按钮
+    // 仅点击播放按钮，不触发"随机漫游"等会切歌的兜底操作
+    // 播放按钮可能异步加载，多次重试点击；检测到「暂停」按钮出现说明已开始播放
     const cfg = readConfig();
     if (cfg.autoPlay) {
       mainWindow.webContents.executeJavaScript(`
@@ -342,74 +340,19 @@ function createWindow() {
           if (location.pathname.indexOf('/login') !== -1) return;
           window.__fnAutoPlayStarted = true;
 
-          var state = 'idle';            // idle -> clicked_play -> fallback -> fallback_done
-          var stateChangedAt = Date.now();
           var tries = 0;
-          var maxTries = 60;             // 最多轮询 30 秒
-
-          function getMedia(){ return document.querySelector('audio, video'); }
-          function isPlaying(){
-            var m = getMedia();
-            return !!m && !m.paused;
-          }
-          // 底部播放/暂停按钮（aria-label 随状态在"播放"/"暂停"间切换）
-          function clickPlayButton(){
-            var btn = document.querySelector('button[aria-label="播放"], button[aria-label="暂停"]');
-            if (btn) { btn.click(); return true; }
-            return false;
-          }
-          // 侧边栏「音乐库」导航项（div，文本恰为"音乐库"）
-          function clickMusicLibrary(){
-            var els = document.querySelectorAll('div, button, a, span');
-            for (var i = 0; i < els.length; i++){
-              var el = els[i];
-              if ((el.textContent || '').trim() === '音乐库' &&
-                  el.offsetParent !== null && el.getClientRects().length > 0){
-                el.click();
-                return true;
-              }
-            }
-            return false;
-          }
-          // 「随机漫游」按钮（aria-label / title 双重匹配）
-          function clickRandomPlay(){
-            var btn = document.querySelector('button[aria-label="随机漫游"], button[title="随机漫游"]');
-            if (btn) { btn.click(); return true; }
-            return false;
-          }
-
+          var maxTries = 20;  // 最多重试 10 秒
           var timer = setInterval(function(){
             tries++;
             if (tries > maxTries) { clearInterval(timer); return; }
-
-            // 已在播放：结束
-            if (isPlaying()) { clearInterval(timer); return; }
-
-            if (state === 'idle'){
-              // 优先：直接点播放按钮
-              if (clickPlayButton()){
-                state = 'clicked_play';
-                stateChangedAt = Date.now();
-              }
-            } else if (state === 'clicked_play'){
-              // 等 3 秒，未播放则进入兜底
-              if (Date.now() - stateChangedAt > 3000){
-                state = 'fallback';
-                stateChangedAt = Date.now();
-              }
-            } else if (state === 'fallback'){
-              // 兜底：音乐库 div → 随机漫游 button → 再点播放按钮
-              clickMusicLibrary();
-              setTimeout(function(){
-                clickRandomPlay();
-                setTimeout(function(){ clickPlayButton(); }, 500);
-              }, 500);
-              state = 'fallback_done';
-              stateChangedAt = Date.now();
-            } else if (state === 'fallback_done'){
-              // 兜底后再观察 8 秒，仍未播放则放弃
-              if (Date.now() - stateChangedAt > 8000){ clearInterval(timer); }
+            // 检测到「暂停」按钮 = 已在播放，停止重试
+            if (document.querySelector('button[aria-label="暂停"]')) {
+              clearInterval(timer);
+              return;
             }
+            // 点击「播放」按钮（播放器异步加载期间可能暂未出现）
+            var btn = document.querySelector('button[aria-label="播放"]');
+            if (btn) btn.click();
           }, 500);
         })();
       `).catch(() => {});

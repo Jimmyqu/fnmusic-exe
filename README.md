@@ -79,7 +79,7 @@ npm run dist:portable
 
 ## 版本号
 
-当前版本：**v2.1.6**
+当前版本：**v2.1.7**
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)（Semantic Versioning）：
 
@@ -90,6 +90,14 @@ npm run dist:portable
 版本号同步维护在 [package.json](package.json) 的 `version` 字段。
 
 ## 更新日志
+
+### v2.1.7
+
+- 托盘右键菜单新增「打开自动播放」选项：勾选后启动 app 进入主界面自动点击播放按钮开始播放
+  - 进入主界面后自动点击底部 `button[aria-label="播放"]`，播放器异步加载期间最多重试 10 秒
+  - 检测到 `button[aria-label="暂停"]` 出现即视为已开始播放，停止重试
+  - 配置持久化到 `config.json` 的 `autoPlay` 字段
+  - 仅在主界面触发（登录页跳过），避免误操作
 
 ### v2.1.6
 
