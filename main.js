@@ -263,12 +263,19 @@ let tray = null;
 // 用于拦截 close 事件，让叉叉走「最小化到托盘」而非退出
 let isQuitting = false;
 
+// 内置窗口尺寸与页面缩放比例（按比例同步缩放，保证内容完整显示无滚动条）
+// 基准：1860x1150 无滚动条；zoom=0.8 时等效视口需 ≥ 1860x1150
+// 故窗口尺寸 = 1860*0.8=1488, 1150*0.8=920，取整留余量 1500x930
+const WIN_WIDTH = 1500;
+const WIN_HEIGHT = 930;
+const PAGE_ZOOM = 0.8;
+
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 1280,
-    height: 820,
+    width: WIN_WIDTH,
+    height: WIN_HEIGHT,
     minWidth: 1024,
-    minHeight: 680,
+    minHeight: 760,
     title: '飞牛音乐',
     backgroundColor: '#00000000',
     show: false,
@@ -293,7 +300,12 @@ function createWindow() {
     }
   });
 
-  mainWindow.once('ready-to-show', () => mainWindow.show());
+  // 每次启动强制使用内置窗口尺寸与页面缩放，避免系统记住上次调整后的大小
+  mainWindow.once('ready-to-show', () => {
+    mainWindow.setSize(WIN_WIDTH, WIN_HEIGHT);
+    mainWindow.webContents.setZoomFactor(PAGE_ZOOM);
+    mainWindow.show();
+  });
 
   // 远程页面加载完成后，注入顶部可拖拽条（浮于页面之上，不占用布局空间，避免底部被裁）
   mainWindow.webContents.on('did-finish-load', () => {
