@@ -20,7 +20,7 @@ function setupCookiePersistence() {
 
   // 注意：不要在此处设置 setCertificateVerifyProc。
   // 之前对非 fnos.net 域名返回 callback(-2) 会直接拒绝 SSL 握手（net_error -2 ERR_FAILED），
-  // 导致普通 https 站点（如 music.wbcwqq.cn）无法加载。
+  // 导致普通 https 站点（如 your-domain.com）无法加载。
   // fnid 中转 *.fnos.net 的证书问题改由窗口级 certificate-error 事件处理。
   ses.cookies.on('changed', (_e, cookie, _cause, removed) => {
     if (removed) return;
@@ -234,7 +234,7 @@ function createWindow() {
   });
 
   // 仅允许停留在当前服务器站内
-  // fnos.net 中继场景：子域名形式(srtv369.fnos.net)与路径形式(fnos.net/srtv369)会互转，
+  // fnos.net 中继场景：子域名形式(your-fnid.fnos.net)与路径形式(fnos.net/your-fnid)会互转，
   // 需放行整个 fnos.net 域内导航，避免重定向被拦截后丢到外部浏览器导致 app 内卡住
   mainWindow.webContents.on('will-navigate', (event, url) => {
     const allowed = getAllowedOrigin();
@@ -300,7 +300,7 @@ function getAllowedOrigin() {
 
 // 判断目标 url 是否允许在 app 内导航
 // 1. 同 origin 直接放行
-// 2. fnos.net 中继场景：子域名形式(srtv369.fnos.net)与路径形式(fnos.net/srtv369)会互相重定向，
+// 2. fnos.net 中继场景：子域名形式(your-fnid.fnos.net)与路径形式(fnos.net/your-fnid)会互相重定向，
 //    当已配置服务器为 fnos.net 中继时，放行整个 fnos.net 域内导航，避免重定向被拦截导致卡住
 function isNavigationAllowed(url, allowed) {
   if (!url || !allowed) return false;
