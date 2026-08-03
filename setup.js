@@ -71,6 +71,16 @@
         window.open(repoLink.href);
       });
     }
+
+    // 自定义关闭按钮：调用 IPC 最小化到托盘
+    var closeBtn = document.getElementById('close-btn');
+    if (closeBtn) {
+      closeBtn.addEventListener('click', function () {
+        if (window.serverBridge && window.serverBridge.minimizeToTray) {
+          window.serverBridge.minimizeToTray();
+        }
+      });
+    }
   }
 
   if (document.readyState === 'loading') {

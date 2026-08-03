@@ -273,17 +273,12 @@ function createWindow() {
     backgroundColor: '#00000000',
     show: false,
     autoHideMenuBar: true,
-    // 无边框客户端外观：隐藏标题栏，保留原生最小化/最大化/关闭按钮（右上角覆盖层）
+    // 无边框客户端外观：隐藏标题栏，叉叉用自定义注入按钮（原生 overlay 无法控制 hover 底色）
     frame: false,
     // 仅保留关闭按钮（叉叉 = 最小化到托盘），隐藏最小化 / 最大化按钮
     minimizable: false,
     maximizable: false,
     titleBarStyle: 'hidden',
-    titleBarOverlay: {
-      color: '#00000000',
-      symbolColor: '#e8e8f0',
-      height: 36
-    },
     icon: path.join(__dirname, 'build', 'icon.ico'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -317,6 +312,35 @@ function createWindow() {
         background: rgba(15, 15, 23, 0.0) !important;
         pointer-events: auto !important;
       }
+      .__fn-close-btn {
+        position: fixed !important;
+        top: 8px !important;
+        right: 10px !important;
+        width: 22px !important;
+        height: 22px !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        -webkit-app-region: no-drag !important;
+        z-index: 2147483648 !important;
+        cursor: pointer !important;
+        color: #8a8a96 !important;
+        background: transparent !important;
+        border: none !important;
+        border-radius: 4px !important;
+        transition: color 0.15s !important;
+        opacity: 0.7 !important;
+      }
+      .__fn-close-btn:hover {
+        color: #e8e8f0 !important;
+        background: transparent !important;
+        opacity: 1 !important;
+      }
+      .__fn-close-btn svg {
+        width: 11px !important;
+        height: 11px !important;
+        display: block !important;
+      }
     `).catch(() => {});
     mainWindow.webContents.executeJavaScript(`
       (function(){
@@ -325,6 +349,18 @@ function createWindow() {
         d.id = '__fn-dragbar';
         d.className = '__fn-dragbar';
         document.documentElement.appendChild(d);
+        // 自定义关闭按钮（叉叉 = 最小化到托盘，由主进程 close 事件处理）
+        var b = document.createElement('div');
+        b.id = '__fn-close-btn';
+        b.className = '__fn-close-btn';
+        b.title = '关闭';
+        b.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>';
+        b.addEventListener('click', function(){
+          if (window.serverBridge && window.serverBridge.minimizeToTray) {
+            window.serverBridge.minimizeToTray();
+          }
+        });
+        document.documentElement.appendChild(b);
       })();
     `).catch(() => {});
 
@@ -540,6 +576,14 @@ ipcMain.handle('submit-server', async (event, rawUrl) => {
 
 // 返回应用版本号（sandbox 渲染进程无法 require package.json，由主进程提供）
 ipcMain.handle('get-app-version', () => app.getVersion());
+
+// 最小化到托盘（叉叉按钮调用）
+ipcMain.handle('minimize-to-tray', () => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.hide();
+  }
+  return true;
+});
 
 // 创建托盘图标与右键菜单
 function createTray() {

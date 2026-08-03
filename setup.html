@@ -23,6 +23,35 @@
       -webkit-app-region: drag;
       z-index: 100;
     }
+    .close-btn {
+      position: fixed;
+      top: 8px;
+      right: 10px;
+      width: 22px;
+      height: 22px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      -webkit-app-region: no-drag;
+      z-index: 101;
+      cursor: pointer;
+      color: #8a8a96;
+      background: transparent;
+      border: none;
+      border-radius: 4px;
+      transition: color 0.15s, opacity 0.15s;
+      opacity: 0.7;
+    }
+    .close-btn:hover {
+      color: #e8e8f0;
+      background: transparent;
+      opacity: 1;
+    }
+    .close-btn svg {
+      width: 11px;
+      height: 11px;
+      display: block;
+    }
     .wrap {
       height: 100%;
       display: flex;
@@ -138,6 +167,9 @@
 </head>
 <body>
   <div class="titlebar"></div>
+  <div class="close-btn" id="close-btn" title="关闭">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>
+  </div>
   <div class="wrap">
     <div class="card">
       <div class="logo">

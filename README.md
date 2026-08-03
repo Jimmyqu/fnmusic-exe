@@ -79,7 +79,7 @@ npm run dist:portable
 
 ## 版本号
 
-当前版本：**v2.1.9**
+当前版本：**v2.2.0**
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)（Semantic Versioning）：
 
@@ -90,6 +90,15 @@ npm run dist:portable
 版本号同步维护在 [package.json](package.json) 的 `version` 字段。
 
 ## 更新日志
+
+### v2.2.0
+
+- 右上角关闭按钮（叉叉）改为自定义注入按钮，替代原生 titleBarOverlay
+  - 缩小按钮尺寸：22x22px（SVG 图标 11x11px）
+  - 颜色调灰：默认 `#8a8a96`，opacity 0.7，不显眼
+  - hover 仅变符号色为亮白，底色保持透明（原生 overlay 无法做到）
+  - 通过 IPC 直接调用 `mainWindow.hide()` 最小化到托盘
+  - 设置页与远程页面统一使用自定义关闭按钮
 
 ### v2.1.9
 
