@@ -1,6 +1,6 @@
 {
   "name": "feiniu-music",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "description": "飞牛音乐客户端",
   "main": "main.js",
   "author": "飞牛音乐",
@@ -44,7 +44,7 @@
         }
       ],
       "icon": "build/icon.ico",
-      "artifactName": "${productName}-Setup-${version}.${ext}"
+      "artifactName": "fnmusic-Setup-${version}.${ext}"
     },
     "nsis": {
       "oneClick": false,
