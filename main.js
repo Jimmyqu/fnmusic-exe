@@ -263,17 +263,32 @@ let tray = null;
 // 用于拦截 close 事件，让叉叉走「最小化到托盘」而非退出
 let isQuitting = false;
 
-// 内置窗口尺寸与页面缩放比例（按比例同步缩放，保证内容完整显示无滚动条）
-// 基准：1860x1150 无滚动条；zoom=0.8 时等效视口需 ≥ 1860x1150
-// 故窗口尺寸 = 1860*0.8=1488, 1150*0.8=920，取整留余量 1500x930
-const WIN_WIDTH = 1500;
-const WIN_HEIGHT = 930;
-const PAGE_ZOOM = 0.8;
+// 基准窗口高度（在该高度下页面竖直方向无滚动条）
+const BASE_HEIGHT = 1150;
+// 初始窗口占屏幕工作区的比例
+const SCREEN_RATIO = 0.7;
+
+// 根据屏幕大小计算初始窗口尺寸与页面缩放比例
+// - 窗口尺寸 = 屏幕工作区 × 0.7
+// - 缩放比例仅按高度计算：zoom = winHeight / BASE_HEIGHT
+//   保证等效视口高度 = 基准高度，竖直方向无滚动条
+//   窗口变小 → zoom 同步变小；窗口变大 → zoom 同步变大（类似 Ctrl+滚轮缩放）
+function calcWinSizeAndZoom() {
+  const { workArea } = require('electron').screen.getPrimaryDisplay();
+  let winWidth = Math.round(workArea.width * SCREEN_RATIO);
+  let winHeight = Math.round(workArea.height * SCREEN_RATIO);
+  // 兜底：不低于最小尺寸
+  if (winWidth < 1024) winWidth = 1024;
+  if (winHeight < 760) winHeight = 760;
+  const zoom = winHeight / BASE_HEIGHT;
+  return { winWidth, winHeight, zoom };
+}
 
 function createWindow() {
+  const { winWidth, winHeight, zoom } = calcWinSizeAndZoom();
   mainWindow = new BrowserWindow({
-    width: WIN_WIDTH,
-    height: WIN_HEIGHT,
+    width: winWidth,
+    height: winHeight,
     minWidth: 1024,
     minHeight: 760,
     title: '飞牛音乐',
@@ -300,11 +315,26 @@ function createWindow() {
     }
   });
 
-  // 每次启动强制使用内置窗口尺寸与页面缩放，避免系统记住上次调整后的大小
+  // 每次启动强制使用计算出的窗口尺寸与页面缩放，避免系统记住上次调整后的大小
   mainWindow.once('ready-to-show', () => {
-    mainWindow.setSize(WIN_WIDTH, WIN_HEIGHT);
-    mainWindow.webContents.setZoomFactor(PAGE_ZOOM);
+    mainWindow.setSize(winWidth, winHeight);
+    mainWindow.webContents.setZoomFactor(zoom);
     mainWindow.show();
+  });
+
+  // 窗口高度变化时动态调整页面缩放，保证竖直方向无滚动条
+  // 公式：zoom = 当前高度 / BASE_HEIGHT
+  let resizeTimer = null;
+  mainWindow.on('resize', () => {
+    if (resizeTimer) clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        const [_, h] = mainWindow.getContentSize();
+        if (h > 0) {
+          mainWindow.webContents.setZoomFactor(h / BASE_HEIGHT);
+        }
+      }
+    }, 150);
   });
 
   // 远程页面加载完成后，注入顶部可拖拽条（浮于页面之上，不占用布局空间，避免底部被裁）
