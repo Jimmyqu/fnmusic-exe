@@ -768,8 +768,8 @@ if (!gotTheLock) {
     buildMenu();
     createTray();
     createWindow();
-    // 启动后异步检测更新（不阻塞窗口显示）
-    checkForUpdate();
+    // 启动后延迟 3 秒异步检测更新（不阻塞窗口显示）
+    setTimeout(checkForUpdate, 3000);
 
     app.on('activate', () => {
       // macOS 点击 dock 图标时，若窗口被隐藏则重新显示

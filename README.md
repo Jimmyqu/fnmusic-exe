@@ -79,7 +79,7 @@ npm run dist:portable
 
 ## 版本号
 
-当前版本：**v2.1.8**
+当前版本：**v2.1.9**
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)（Semantic Versioning）：
 
@@ -90,6 +90,14 @@ npm run dist:portable
 版本号同步维护在 [package.json](package.json) 的 `version` 字段。
 
 ## 更新日志
+
+### v2.1.9
+
+- 新增启动时自动更新检测：通过 Gitee API 获取最新 release 版本号，与当前版本对比
+  - 启动后延迟 3 秒异步检测，不阻塞窗口显示
+  - 版本不一致时弹窗提示，显示当前版本与最新版本，提供「前往下载」按钮跳转 releases 页面
+  - 检测地址：`https://gitee.com/wang_bingchen/fnmusic-exe/releases`
+  - 请求失败静默忽略，不影响正常使用
 
 ### v2.1.8
 
