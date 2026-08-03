@@ -692,6 +692,66 @@ function buildMenu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
+// ===== 启动时更新检测 =====
+// 通过 Gitee API 获取最新 release 的 tag_name，与当前版本对比
+// 不一致则弹窗提示，提供「前往下载」按钮跳转 releases 页面
+const GITEE_RELEASES_PAGE = 'https://gitee.com/wang_bingchen/fnmusic-exe/releases';
+const GITEE_API_LATEST = 'https://gitee.com/api/v5/repos/wang_bingchen/fnmusic-exe/releases/latest';
+
+// 规范化版本号：去掉前缀 v/V，返回纯数字段数组
+function normalizeVersion(v) {
+  return (v || '')
+    .toString()
+    .trim()
+    .replace(/^[vV]/, '')
+    .split('.')
+    .map((x) => parseInt(x, 10) || 0);
+}
+
+// 比较两个版本号：返回 0 相等，1 a 更新，-1 b 更新
+function compareVersion(a, b) {
+  const va = normalizeVersion(a);
+  const vb = normalizeVersion(b);
+  const len = Math.max(va.length, vb.length);
+  for (let i = 0; i < len; i++) {
+    const xa = va[i] || 0;
+    const xb = vb[i] || 0;
+    if (xa > xb) return 1;
+    if (xa < xb) return -1;
+  }
+  return 0;
+}
+
+async function checkForUpdate() {
+  try {
+    const withTimeout = (p, ms) =>
+      Promise.race([p, new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms))]);
+    const resp = await withTimeout(fetch(GITEE_API_LATEST, { headers: { 'User-Agent': UA } }), 10000);
+    if (!resp.ok) return;
+    const json = await withTimeout(resp.json(), 5000);
+    const latest = json && json.tag_name;
+    if (!latest) return;
+    const current = app.getVersion();
+    if (compareVersion(latest, current) !== 0) {
+      // 版本不一致，弹窗提示
+      const result = await dialog.showMessageBox({
+        type: 'info',
+        title: '发现新版本',
+        message: '发现新版本',
+        detail: `当前版本：v${current}\n最新版本：${latest}\n\n是否前往下载最新版本？`,
+        buttons: ['前往下载', '稍后再说'],
+        defaultId: 0,
+        cancelId: 1
+      });
+      if (result.response === 0) {
+        shell.openExternal(GITEE_RELEASES_PAGE);
+      }
+    }
+  } catch (e) {
+    console.log('[checkForUpdate] error:', e.message);
+  }
+}
+
 // 单实例锁：防止重复启动多个程序实例
 const gotTheLock = app.requestSingleInstanceLock();
 if (!gotTheLock) {
@@ -708,6 +768,8 @@ if (!gotTheLock) {
     buildMenu();
     createTray();
     createWindow();
+    // 启动后异步检测更新（不阻塞窗口显示）
+    checkForUpdate();
 
     app.on('activate', () => {
       // macOS 点击 dock 图标时，若窗口被隐藏则重新显示
