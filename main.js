@@ -265,32 +265,78 @@ let isQuitting = false;
 
 // 基准窗口高度（在该高度下页面竖直方向无滚动条）
 const BASE_HEIGHT = 1150;
-// 初始窗口占屏幕工作区的比例
-const SCREEN_RATIO = 0.7;
+// 三档窗口尺寸预设
+const WIN_PRESETS = {
+  large: { width: 1855, height: 1143, label: '大窗口' },
+  medium: { width: 1575, height: 927, label: '中窗口' },
+  small: { width: 1280, height: 860, label: '小窗口' }
+};
 
-// 根据屏幕大小计算初始窗口尺寸与页面缩放比例
-// - 窗口尺寸 = 屏幕工作区 × 0.7
+// 根据屏幕高度自动选择最合适的窗口档位（默认大窗口，超了用中窗口，还超用小窗口）
+function pickDefaultPreset() {
+  const { workArea } = require('electron').screen.getPrimaryDisplay();
+  const h = workArea.height;
+  if (h >= WIN_PRESETS.large.height) return 'large';
+  if (h >= WIN_PRESETS.medium.height) return 'medium';
+  return 'small';
+}
+
+// 读取持久化的窗口档位（large/medium/small），无配置则自动选择
+function getSavedPreset() {
+  const cfg = readConfig();
+  if (cfg.windowPreset && WIN_PRESETS[cfg.windowPreset]) return cfg.windowPreset;
+  return pickDefaultPreset();
+}
+
+// 计算指定档位的窗口尺寸与页面缩放比例
 // - 缩放比例仅按高度计算：zoom = winHeight / BASE_HEIGHT
 //   保证等效视口高度 = 基准高度，竖直方向无滚动条
-//   窗口变小 → zoom 同步变小；窗口变大 → zoom 同步变大（类似 Ctrl+滚轮缩放）
-function calcWinSizeAndZoom() {
-  const { workArea } = require('electron').screen.getPrimaryDisplay();
-  let winWidth = Math.round(workArea.width * SCREEN_RATIO);
-  let winHeight = Math.round(workArea.height * SCREEN_RATIO);
-  // 兜底：不低于最小尺寸
-  if (winWidth < 1024) winWidth = 1024;
-  if (winHeight < 760) winHeight = 760;
-  const zoom = winHeight / BASE_HEIGHT;
-  return { winWidth, winHeight, zoom };
+function calcWinSizeAndZoom(preset) {
+  const p = WIN_PRESETS[preset] || WIN_PRESETS.small;
+  const zoom = snapToZoomStep(p.height / BASE_HEIGHT);
+  return { winWidth: p.width, winHeight: p.height, zoom };
+}
+
+// 浏览器固定缩放档位（百分比），缩放只能取这些值保证字体清晰
+const ZOOM_STEPS = [0.25, 0.33, 0.50, 0.67, 0.75, 0.80, 0.90, 1.00, 1.10, 1.25, 1.50, 1.75, 2.00];
+
+// 将任意缩放比例吸附到最接近的固定档位
+function snapToZoomStep(value) {
+  let best = ZOOM_STEPS[0];
+  let bestDiff = Math.abs(value - best);
+  for (let i = 1; i < ZOOM_STEPS.length; i++) {
+    const diff = Math.abs(value - ZOOM_STEPS[i]);
+    if (diff < bestDiff) {
+      best = ZOOM_STEPS[i];
+      bestDiff = diff;
+    }
+  }
+  return best;
+}
+
+// 切换窗口档位：持久化配置并立即应用尺寸与缩放
+function applyWindowPreset(preset) {
+  if (!WIN_PRESETS[preset]) return;
+  const cfg = readConfig();
+  cfg.windowPreset = preset;
+  writeConfig(cfg);
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    const { winWidth, winHeight, zoom } = calcWinSizeAndZoom(preset);
+    mainWindow.setSize(winWidth, winHeight);
+    mainWindow.webContents.setZoomFactor(zoom);
+  }
+  // 刷新托盘菜单勾选状态
+  if (tray) tray.setContextMenu(buildTrayMenu());
 }
 
 function createWindow() {
-  const { winWidth, winHeight, zoom } = calcWinSizeAndZoom();
+  const preset = getSavedPreset();
+  const { winWidth, winHeight, zoom } = calcWinSizeAndZoom(preset);
   mainWindow = new BrowserWindow({
     width: winWidth,
     height: winHeight,
-    minWidth: 1024,
-    minHeight: 760,
+    minWidth: 1000,
+    minHeight: 860,
     title: '飞牛音乐',
     backgroundColor: '#00000000',
     show: false,
@@ -331,7 +377,7 @@ function createWindow() {
       if (mainWindow && !mainWindow.isDestroyed()) {
         const [_, h] = mainWindow.getContentSize();
         if (h > 0) {
-          mainWindow.webContents.setZoomFactor(h / BASE_HEIGHT);
+          mainWindow.webContents.setZoomFactor(snapToZoomStep(h / BASE_HEIGHT));
         }
       }
     }, 150);
@@ -641,8 +687,15 @@ function createTray() {
   tray = new Tray(trayIcon);
   tray.setToolTip('飞牛音乐');
 
-  // 构建托盘右键菜单（每次构建都读取最新状态，确保勾选正确）
-  const buildTrayMenu = () => Menu.buildFromTemplate([
+  tray.setContextMenu(buildTrayMenu());
+
+  // 单击托盘图标：显示/隐藏主窗口
+  tray.on('click', () => showMainWindow());
+}
+
+// 构建托盘右键菜单（每次构建都读取最新状态，确保勾选正确）
+function buildTrayMenu() {
+  return Menu.buildFromTemplate([
     {
       label: '显示主窗口',
       click: () => showMainWindow()
@@ -671,6 +724,30 @@ function createTray() {
         // 重新构建菜单刷新勾选状态
         tray.setContextMenu(buildTrayMenu());
       }
+    },
+    { type: 'separator' },
+    {
+      label: '窗口大小',
+      submenu: [
+        {
+          label: '大窗口 (1855×1143)',
+          type: 'radio',
+          checked: getSavedPreset() === 'large',
+          click: () => applyWindowPreset('large')
+        },
+        {
+          label: '中窗口 (1575×927)',
+          type: 'radio',
+          checked: getSavedPreset() === 'medium',
+          click: () => applyWindowPreset('medium')
+        },
+        {
+          label: '小窗口 (1280×860)',
+          type: 'radio',
+          checked: getSavedPreset() === 'small',
+          click: () => applyWindowPreset('small')
+        }
+      ]
     },
     { type: 'separator' },
     {
@@ -704,11 +781,6 @@ function createTray() {
       }
     }
   ]);
-
-  tray.setContextMenu(buildTrayMenu());
-
-  // 单击托盘图标：显示/隐藏主窗口
-  tray.on('click', () => showMainWindow());
 }
 
 // 显示并聚焦主窗口
