@@ -21,6 +21,14 @@
       return;
     }
 
+    // 显示应用版本号（异步从主进程获取）
+    var versionEl = document.getElementById('app-version');
+    if (versionEl && typeof window.serverBridge.getVersion === 'function') {
+      window.serverBridge.getVersion().then(function (v) {
+        if (v) versionEl.textContent = 'v' + v;
+      });
+    }
+
     form.addEventListener('submit', async function (e) {
       e.preventDefault();
       var url = input.value.trim();

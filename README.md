@@ -79,7 +79,7 @@ npm run dist:portable
 
 ## 版本号
 
-当前版本：**v1.6.0**
+当前版本：**v2.1.5**
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)（Semantic Versioning）：
 
@@ -91,9 +91,72 @@ npm run dist:portable
 
 ## 更新日志
 
+### v2.1.5
+
+- 修复打包后设置页报「初始化失败：桥接对象不可用」的问题
+  - 根因：preload 在 `sandbox: true` 下 `require('../package.json')` 会抛错，导致整个 preload 脚本执行失败、`serverBridge` 未暴露
+  - 修复：版本号改由主进程 `app.getVersion()` 通过 IPC `get-app-version` 提供，preload 不再 require 本地文件
+
+### v2.1.4
+
+- 设置页新增版本号显示（标题下方）
+- 托盘右键菜单新增「关于」项：弹窗显示版本号、项目简介、项目地址与声明
+- 安装包文件名由 `飞牛音乐-Setup-x.x.x.exe` 改为 `fnmusic-Setup-x.x.x.exe`
+
+### v2.1.0
+
+- **fnid 解析重构**：恢复通过 fnos.net API 解析真实服务器地址，不再直接走中继地址
+  - 输入 fnid 后调用 `fnos.net` 远程访问 API 获取候选地址列表
+  - 候选地址优先级：局域网 http（最快，无证书问题）> fnos.net 中继 https（兜底）
+  - 移除公网 IP 直连分支（家庭网络绝大多数无公网 IP，直连意义不大）
+  - 局域网 http 候选**顺序探测**（非并发），第一个可达即用；全不通则用 https 中继兜底
+  - https 中继不做主动探测（证书可能过期 fetch 失败），直接交由 BrowserWindow 加载
+- **修复 fnid 在局域网跳出 app 框架的问题**：
+  - 根因：之前直接构造 `https://{fnid}.fnos.net/music/` 中继地址，在局域网环境下中继会 302 重定向到 NAS 局域网 IP，触发跨域后被 `will-navigate` 丢到系统浏览器
+  - 修复：fnid 现在先探测局域网 IP，局域网通就直接用局域网 IP 加载，避免中继重定向跨域
+- **`isNavigationAllowed` 增强**：
+  - 放行 fnos.net 中继 → 私网 IP 的重定向（兜底防御，避免重定向被拦截）
+  - 放行局域网 IP origin 同 IP 不同端口的导航（NAS 站内跳端口登录等场景）
+- **`will-navigate` 跨域处理调整**：跨域导航仅 `preventDefault` 阻止，不再调用 `shell.openExternal`
+  - 页面内部重定向已由 `isNavigationAllowed` 放行
+  - 用户点击外链走 `setWindowOpenHandler`（target=_blank）转交系统浏览器
+  - 避免页面内部跨域导航被错误地弹出到外部浏览器
+- 新增 `isPrivateIp` 辅助函数：识别 10.x / 172.16-31.x / 192.168.x / 127.x / 169.254.x 私网段
+
+### v2.0.0
+
+- **重大修复**：解决 1.6.0 引入的 `setCertificateVerifyProc` 导致普通 https 站点（如 `your-domain.com`）SSL 握手被拒绝（`net_error -2 ERR_FAILED`）的严重问题
+  - 根因：session 级 `setCertificateVerifyProc` 对非 fnos.net / 非 IP 域名返回 `callback(-2)`，该值在 Electron 中代表"直接拒绝"而非"使用默认验证"，导致所有普通 https 站点无法加载
+  - 修复：移除 session 级 `setCertificateVerifyProc`，改用窗口级 `certificate-error` 事件，仅对 `*.fnos.net` 中转域名与 NAS 直连 IP 放行证书，普通 https 站点恢复 Chromium 默认验证
+- 地址解析方法 `resolveAccessUrl(input)` 稳定化：fnid / IP / 域名 / 完整地址统一入口，输出可直接浏览器打开的访问地址
+- 持久化改为记录用户原始输入（`serverInput`），每次启动重新走 `resolveAccessUrl` 确认本次访问地址，fnid 不再缓存解析结果
+- `ensureMusicSuffix` 统一补 `/music/`（带尾斜杠），避免服务器 301 重定向触发 `ERR_FAILED`
+- fnid 简化为直接构造中继地址 `https://{fnid}.fnos.net/music/`，移除 fnos.net API 解析与并发探测逻辑
+- 导航放行：`isNavigationAllowed` 放行 fnos.net 域内互转（子域名 ↔ 路径形式），避免中继 301 被拦截后丢到外部浏览器
+- 移除冗余的 `crypto` / `net` 依赖与 FNOS API 签名常量
+- 全链路加诊断日志（`[resolveAccessUrl]` / `[will-navigate]` / `[did-fail-load]` 等），便于排查加载问题
+
+### v1.8.1
+
+- 修复访问 `https://your-domain.com/music` 卡在"连接中"的问题：服务器 301 重定向 `/music` → `/music/`，Electron `loadURL` 跟随重定向时出现 `ERR_FAILED`
+- `ensureMusicSuffix` 统一补成 `/music/`（带尾斜杠），fnid 中继地址同步改为 `/music/`，从源头避免 301 重定向
+
+### v1.8.0
+
+- 重构地址解析：新增统一方法 `resolveAccessUrl(input)`，fnid / IP / 完整地址统一入口
+- 持久化改为记录用户原始输入（`serverInput`），不再分 fnid / serverUrl 两个字段
+- 每次启动读取原始输入，重新走 `resolveAccessUrl` 确认本次访问地址
+- 移除 buildFnidUrl / loadFnid，fnid 分支并入统一解析方法
+
+### v1.7.0
+
+- 简化 fnid 访问逻辑：fnid 直接走中继地址 `https://{fnid}.fnos.net/music`，不再调用 fnos.net API 解析候选、不再探测公网/局域网地址
+- 移除 resolveFnid / probeCandidates 及相关签名常量，去掉 crypto / net 依赖
+- fnid 持久化 fnid 本身（非解析地址），下次启动直接用 fnid 构造中继地址加载
+
 ### v1.6.0
 
-- 新增 fnid 登录支持：输入 fnid（如 `srtv666`）自动通过 `fnos.net` API 解析真实服务器地址
+- 新增 fnid 登录支持：输入 fnid（如 `your-fnid`）自动通过 `fnos.net` API 解析真实服务器地址
 - 局域网 / 外网智能适配：fnid 解析返回多个候选地址（局域网 IP、公网 IP、relay 中转），并发探测选最优可达地址
   - 局域网内优先用局域网 IP 直连（http，最快）
   - 外网用公网 IP 直连（http）

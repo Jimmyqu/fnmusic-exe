@@ -66,6 +66,13 @@
       margin-bottom: 30px;
       line-height: 1.6;
     }
+    .version {
+      font-size: 12px;
+      color: #6f6889;
+      margin-top: -22px;
+      margin-bottom: 30px;
+      letter-spacing: 0.5px;
+    }
     .field {
       position: relative;
       margin-bottom: 16px;
@@ -138,22 +145,22 @@
       </div>
       <h1>飞牛音乐</h1>
       <p class="sub">请输入音乐服务器地址以继续<br />首次使用需要配置一次，之后将自动连接</p>
+      <p class="version" id="app-version">v-</p>
 
       <form id="form">
         <div class="field">
           <label for="url">服务器地址</label>
           <input id="url" type="text" autofocus autocomplete="off"
-                 placeholder="IP / 网址 / fnid（如 srtv666）" spellcheck="false" />
+                 placeholder="IP / 网址 / fnid（如 your-fnid）" spellcheck="false" />
         </div>
         <button class="btn" id="btn" type="submit">连接</button>
         <div class="msg" id="msg"></div>
       </form>
 
       <p class="hint">
-        提示：可输入纯 IP、网址或 fnid<br />
-        纯 IP（如 192.168.1.1）自动补 http 与 5666 端口<br />
-        fnid（如 srtv666）通过 fnos.net 解析真实地址<br />
-        带协议 / 带端口则用输入值；结尾无 /music 自动补全<br />
+        提示：可输入 fnid、IP 或完整网址<br />
+        fnid（如 your-fnid）优先走局域网直连，不通时再用中继 https://your-fnid.fnos.net/music/<br />
+        IP / 网址自动补协议与 /music 后缀<br />
         项目地址：<a href="https://github.com/wbc389561407/fnmusic-exe" id="repo-link" target="_blank" rel="noopener">github.com/wbc389561407/fnmusic-exe</a>
       </p>
     </div>
