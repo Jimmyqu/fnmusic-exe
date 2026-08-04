@@ -7,6 +7,8 @@ contextBridge.exposeInMainWorld('serverBridge', {
   submit: (url) => ipcRenderer.invoke('submit-server', url),
   // 获取应用版本号（主进程 app.getVersion()，sandbox 下不能用 require 读 package.json）
   getVersion: () => ipcRenderer.invoke('get-app-version'),
+  // 检查更新，返回 Promise<{ hasUpdate, latestVersion, releaseUrl, ... }>
+  checkUpdate: () => ipcRenderer.invoke('check-update'),
   // 最小化到托盘（叉叉按钮调用）
   minimizeToTray: () => ipcRenderer.invoke('minimize-to-tray')
 });

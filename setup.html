@@ -102,6 +102,17 @@
       margin-bottom: 30px;
       letter-spacing: 0.5px;
     }
+    .update-tip {
+      font-size: 12px;
+      color: #8a9bf0;
+      margin-top: -22px;
+      margin-bottom: 30px;
+    }
+    .update-tip a {
+      color: #8a9bf0;
+      text-decoration: none;
+    }
+    .update-tip a:hover { text-decoration: underline; }
     .field {
       position: relative;
       margin-bottom: 16px;
@@ -178,6 +189,9 @@
       <h1>飞牛音乐</h1>
       <p class="sub">请输入音乐服务器地址以继续<br />首次使用需要配置一次，之后将自动连接</p>
       <p class="version" id="app-version">v-</p>
+      <p class="update-tip" id="update-tip" style="display:none;">
+        <a href="#" id="update-link" target="_blank" rel="noopener">发现新版本，点击前往下载</a>
+      </p>
 
       <form id="form">
         <div class="field">

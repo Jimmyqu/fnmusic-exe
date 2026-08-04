@@ -2,6 +2,12 @@ const { app, BrowserWindow, shell, session, Menu, ipcMain, Tray, nativeImage, di
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+const https = require('https');
+
+// 项目仓库地址（版本更新检查与首页展示统一使用）
+const REPO_URL = 'https://github.com/wbc389561407/fnmusic-exe';
+// 用 tags 接口而非 releases/latest：后者会跳过 prerelease / draft，导致取到的不是最新 tag
+const REPO_TAGS_API = 'https://api.github.com/repos/wbc389561407/fnmusic-exe/tags';
 
 // 伪装成普通 Chrome 浏览器的 User-Agent，避免被站点拦截
 const UA =
@@ -665,6 +671,54 @@ ipcMain.handle('submit-server', async (event, rawUrl) => {
 // 返回应用版本号（sandbox 渲染进程无法 require package.json，由主进程提供）
 ipcMain.handle('get-app-version', () => app.getVersion());
 
+// 比较版本号：返回 1 表示 latest > current，0 相等，-1 latest < current
+function compareVersions(latest, current) {
+  const pa = String(latest).replace(/^v/, '').split('.').map(Number);
+  const pb = String(current).replace(/^v/, '').split('.').map(Number);
+  for (let i = 0; i < 3; i++) {
+    const da = pa[i] || 0;
+    const db = pb[i] || 0;
+    if (da > db) return 1;
+    if (da < db) return -1;
+  }
+  return 0;
+}
+
+// 检查更新：调用 GitHub tags 接口获取最新 tag，与当前版本对比
+async function checkForUpdate() {
+  return new Promise((resolve) => {
+    const req = https.get(REPO_TAGS_API, { headers: { 'User-Agent': 'fnmusic-exe-updater' } }, (res) => {
+      let data = '';
+      res.on('data', (chunk) => (data += chunk));
+      res.on('end', () => {
+        try {
+          const list = JSON.parse(data);
+          // tags 接口返回数组（按创建时间倒序），取第一个即最新 tag
+          const latestTag = (Array.isArray(list) && list[0] && list[0].name) || '';
+          if (!latestTag) {
+            resolve({ hasUpdate: false, error: 'no_tag' });
+            return;
+          }
+          const currentVer = app.getVersion();
+          const hasUpdate = compareVersions(latestTag, currentVer) > 0;
+          resolve({
+            hasUpdate,
+            currentVersion: currentVer,
+            latestVersion: latestTag,
+            releaseUrl: REPO_URL + '/releases/tag/' + latestTag
+          });
+        } catch {
+          resolve({ hasUpdate: false, error: 'parse_failed' });
+        }
+      });
+    });
+    req.on('error', (e) => resolve({ hasUpdate: false, error: e.message }));
+    req.setTimeout(8000, () => { req.destroy(); resolve({ hasUpdate: false, error: 'timeout' }); });
+  });
+}
+
+ipcMain.handle('check-update', () => checkForUpdate());
+
 // 最小化到托盘（叉叉按钮调用）
 ipcMain.handle('minimize-to-tray', () => {
   if (mainWindow && !mainWindow.isDestroyed()) {
@@ -851,62 +905,27 @@ function buildMenu() {
 }
 
 // ===== 启动时更新检测 =====
-// 通过 Gitee API 获取最新 release 的 tag_name，与当前版本对比
-// 不一致则弹窗提示，提供「前往下载」按钮跳转 releases 页面
-const GITEE_RELEASES_PAGE = 'https://gitee.com/wang_bingchen/fnmusic-exe/releases';
-const GITEE_API_LATEST = 'https://gitee.com/api/v5/repos/wang_bingchen/fnmusic-exe/releases/latest';
-
-// 规范化版本号：去掉前缀 v/V，返回纯数字段数组
-function normalizeVersion(v) {
-  return (v || '')
-    .toString()
-    .trim()
-    .replace(/^[vV]/, '')
-    .split('.')
-    .map((x) => parseInt(x, 10) || 0);
-}
-
-// 比较两个版本号：返回 0 相等，1 a 更新，-1 b 更新
-function compareVersion(a, b) {
-  const va = normalizeVersion(a);
-  const vb = normalizeVersion(b);
-  const len = Math.max(va.length, vb.length);
-  for (let i = 0; i < len; i++) {
-    const xa = va[i] || 0;
-    const xb = vb[i] || 0;
-    if (xa > xb) return 1;
-    if (xa < xb) return -1;
-  }
-  return 0;
-}
-
-async function checkForUpdate() {
+// 启动后调用 checkForUpdate（GitHub tags 接口），有更新则弹窗一次
+// 注意：checkForUpdate 同时被 IPC 'check-update' 复用，供设置页显示更新链接（不弹窗）
+// 启动弹窗与设置页链接互不干扰，避免重复弹窗
+async function checkUpdateAndNotify() {
   try {
-    const withTimeout = (p, ms) =>
-      Promise.race([p, new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms))]);
-    const resp = await withTimeout(fetch(GITEE_API_LATEST, { headers: { 'User-Agent': UA } }), 10000);
-    if (!resp.ok) return;
-    const json = await withTimeout(resp.json(), 5000);
-    const latest = json && json.tag_name;
-    if (!latest) return;
-    const current = app.getVersion();
-    if (compareVersion(latest, current) !== 0) {
-      // 版本不一致，弹窗提示
-      const result = await dialog.showMessageBox({
-        type: 'info',
-        title: '发现新版本',
-        message: '发现新版本',
-        detail: `当前版本：v${current}\n最新版本：${latest}\n\n是否前往下载最新版本？`,
-        buttons: ['前往下载', '稍后再说'],
-        defaultId: 0,
-        cancelId: 1
-      });
-      if (result.response === 0) {
-        shell.openExternal(GITEE_RELEASES_PAGE);
-      }
+    const info = await checkForUpdate();
+    if (!info || !info.hasUpdate) return;
+    const result = await dialog.showMessageBox({
+      type: 'info',
+      title: '发现新版本',
+      message: '发现新版本',
+      detail: `当前版本：v${info.currentVersion}\n最新版本：${info.latestVersion}\n\n是否前往下载最新版本？`,
+      buttons: ['前往下载', '稍后再说'],
+      defaultId: 0,
+      cancelId: 1
+    });
+    if (result.response === 0 && info.releaseUrl) {
+      shell.openExternal(info.releaseUrl);
     }
   } catch (e) {
-    console.log('[checkForUpdate] error:', e.message);
+    console.log('[checkUpdateAndNotify] error:', e.message);
   }
 }
 
@@ -926,8 +945,8 @@ if (!gotTheLock) {
     buildMenu();
     createTray();
     createWindow();
-    // 启动后延迟 3 秒异步检测更新（不阻塞窗口显示）
-    setTimeout(checkForUpdate, 3000);
+    // 启动后延迟 3 秒异步检测更新（不阻塞窗口显示），仅弹窗一次
+    setTimeout(checkUpdateAndNotify, 3000);
 
     app.on('activate', () => {
       // macOS 点击 dock 图标时，若窗口被隐藏则重新显示

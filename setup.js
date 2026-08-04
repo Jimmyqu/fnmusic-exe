@@ -29,6 +29,19 @@
       });
     }
 
+    // 检查更新：调用 GitHub API 对比最新 release 版本，有更新则显示提示
+    var updateTip = document.getElementById('update-tip');
+    var updateLink = document.getElementById('update-link');
+    if (updateTip && updateLink && typeof window.serverBridge.checkUpdate === 'function') {
+      window.serverBridge.checkUpdate().then(function (info) {
+        if (info && info.hasUpdate && info.latestVersion) {
+          updateLink.textContent = '发现新版本 ' + info.latestVersion + '，点击前往下载';
+          updateLink.href = info.releaseUrl || 'https://github.com/wbc389561407/fnmusic-exe/releases/latest';
+          updateTip.style.display = 'block';
+        }
+      });
+    }
+
     form.addEventListener('submit', async function (e) {
       e.preventDefault();
       var url = input.value.trim();
@@ -69,6 +82,15 @@
       repoLink.addEventListener('click', function (e) {
         e.preventDefault();
         window.open(repoLink.href);
+      });
+    }
+
+    // 更新链接点击：同样用系统浏览器打开 Release 页面
+    var updateLink = document.getElementById('update-link');
+    if (updateLink) {
+      updateLink.addEventListener('click', function (e) {
+        e.preventDefault();
+        window.open(updateLink.href);
       });
     }
 
