@@ -79,7 +79,7 @@ npm run dist:portable
 
 ## 版本号
 
-当前版本：**v2.2.1**
+当前版本：**v2.2.3**
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)（Semantic Versioning）：
 
