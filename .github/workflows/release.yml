@@ -3,7 +3,8 @@ name: Build & Release
 on:
   push:
     tags:
-      - 'v*'  # 推送 v 开头的 tag 时触发，如 v2.1.5
+      - 'v*'  # 推送 v 开头的 tag 时触发自动打包并发布 Release
+  workflow_dispatch:  # 支持在 Actions 页面手动点「Run workflow」触发（仅打包，不发布 Release）
 
 jobs:
   build:
@@ -25,7 +26,16 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # 打包产物上传到 Actions 运行页面（手动触发也能从这里下载 .exe）
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fnmusic-windows
+          path: dist/fnmusic-Setup-*.exe
+
+      # 仅 tag 触发时才发布到 GitHub Releases
       - name: Release
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           files: dist/fnmusic-Setup-*.exe
