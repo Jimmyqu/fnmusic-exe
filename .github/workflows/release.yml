@@ -6,6 +6,10 @@ on:
       - 'v*'  # 推送 v 开头的 tag 时触发自动打包并发布 Release
   workflow_dispatch:  # 支持在 Actions 页面手动点「Run workflow」触发（仅打包，不发布 Release）
 
+# 显式声明写权限：默认 GITHUB_TOKEN 只读，创建 Release / 生成 release notes 需要 contents: write
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: windows-latest
@@ -16,7 +20,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
 
       - name: Install deps
         run: npm ci
