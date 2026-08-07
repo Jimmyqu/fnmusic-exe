@@ -93,179 +93,123 @@ npm run dist:portable
 
 ### v2.2.1
 
-- 新增三档窗口尺寸预设：大窗口 1855×1143、中窗口 1575×927、小窗口 1280×860
-  - 启动时根据屏幕高度自动选择最合适的档位（默认大窗口，超限降级到中/小窗口）
-  - 托盘右键菜单新增「窗口大小」子菜单，支持大/中/小三档切换
-  - 切换后立即应用尺寸并持久化到 config.json 的 windowPreset 字段
-- 页面缩放改用浏览器固定档位（25%~200%），按窗口高度自动吸附最接近档位，字体清晰不模糊
-- 窗口最小尺寸限制为 1000×860
-- 修复托盘切换窗口大小弹出 `buildTrayMenu is not defined` 错误（函数提升为模块级）
+- 新增三档窗口尺寸预设：大/中/小窗口，启动时按屏幕高度自动选择
+- 托盘右键菜单新增「窗口大小」切换
+- 页面缩放按窗口高度自动适配，字体清晰不模糊
 
 ### v2.2.0
 
-- 右上角关闭按钮（叉叉）改为自定义注入按钮，替代原生 titleBarOverlay
-  - 缩小按钮尺寸：22x22px（SVG 图标 11x11px）
-  - 颜色调灰：默认 `#8a8a96`，opacity 0.7，不显眼
-  - hover 仅变符号色为亮白，底色保持透明（原生 overlay 无法做到）
-  - 通过 IPC 直接调用 `mainWindow.hide()` 最小化到托盘
-  - 设置页与远程页面统一使用自定义关闭按钮
+- 右上角关闭按钮缩小并调灰，鼠标悬停只改变图标颜色不改变底色
 
 ### v2.1.9
 
-- 新增启动时自动更新检测：通过 Gitee API 获取最新 release 版本号，与当前版本对比
-  - 启动后延迟 3 秒异步检测，不阻塞窗口显示
-  - 版本不一致时弹窗提示，显示当前版本与最新版本，提供「前往下载」按钮跳转 releases 页面
-  - 检测地址：`https://gitee.com/wang_bingchen/fnmusic-exe/releases`
-  - 请求失败静默忽略，不影响正常使用
+- 新增启动时自动更新检测，延迟 3 秒异步执行，版本不一致时提示下载
 
 ### v2.1.8
 
-- 新增启动时自动更新检测：通过 Gitee API 获取最新 release 版本号，与当前版本对比
-  - 版本不一致时弹窗提示，显示当前版本与最新版本，提供「前往下载」按钮跳转 releases 页面
-  - 检测地址：`https://gitee.com/wang_bingchen/fnmusic-exe/releases`
-  - 异步检测不阻塞窗口显示，请求失败静默忽略
+- 新增启动时自动更新检测，版本不一致时提示下载地址
 
 ### v2.1.7
 
-- 托盘右键菜单新增「打开自动播放」选项：勾选后启动 app 进入主界面自动点击播放按钮开始播放
-  - 进入主界面后自动点击底部 `button[aria-label="播放"]`，播放器异步加载期间最多重试 10 秒
-  - 检测到 `button[aria-label="暂停"]` 出现即视为已开始播放，停止重试
-  - 配置持久化到 `config.json` 的 `autoPlay` 字段
-  - 仅在主界面触发（登录页跳过），避免误操作
+- 托盘右键新增「打开自动播放」选项，勾选后启动 app 自动播放
 
 ### v2.1.6
 
-- 修复开机自启后出现额外窗口的问题：禁止页面 `window.open` 新建窗口，所有外部链接改用系统浏览器打开
+- 修复开机自启后出现额外窗口的问题
 
 ### v2.1.5
 
 - 修复打包后设置页报「初始化失败：桥接对象不可用」的问题
-  - 根因：preload 在 `sandbox: true` 下 `require('../package.json')` 会抛错，导致整个 preload 脚本执行失败、`serverBridge` 未暴露
-  - 修复：版本号改由主进程 `app.getVersion()` 通过 IPC `get-app-version` 提供，preload 不再 require 本地文件
 
 ### v2.1.4
 
-- 设置页新增版本号显示（标题下方）
-- 托盘右键菜单新增「关于」项：弹窗显示版本号、项目简介、项目地址与声明
-- 安装包文件名由 `飞牛音乐-Setup-x.x.x.exe` 改为 `fnmusic-Setup-x.x.x.exe`
+- 设置页新增版本号显示
+- 托盘右键新增「关于」项
+- 安装包文件名改为 `fnmusic-Setup-x.x.x.exe`
 
 ### v2.1.0
 
-- **fnid 解析重构**：恢复通过 fnos.net API 解析真实服务器地址，不再直接走中继地址
-  - 输入 fnid 后调用 `fnos.net` 远程访问 API 获取候选地址列表
-  - 候选地址优先级：局域网 http（最快，无证书问题）> fnos.net 中继 https（兜底）
-  - 移除公网 IP 直连分支（家庭网络绝大多数无公网 IP，直连意义不大）
-  - 局域网 http 候选**顺序探测**（非并发），第一个可达即用；全不通则用 https 中继兜底
-  - https 中继不做主动探测（证书可能过期 fetch 失败），直接交由 BrowserWindow 加载
-- **修复 fnid 在局域网跳出 app 框架的问题**：
-  - 根因：之前直接构造 `https://{fnid}.fnos.net/music/` 中继地址，在局域网环境下中继会 302 重定向到 NAS 局域网 IP，触发跨域后被 `will-navigate` 丢到系统浏览器
-  - 修复：fnid 现在先探测局域网 IP，局域网通就直接用局域网 IP 加载，避免中继重定向跨域
-- **`isNavigationAllowed` 增强**：
-  - 放行 fnos.net 中继 → 私网 IP 的重定向（兜底防御，避免重定向被拦截）
-  - 放行局域网 IP origin 同 IP 不同端口的导航（NAS 站内跳端口登录等场景）
-- **`will-navigate` 跨域处理调整**：跨域导航仅 `preventDefault` 阻止，不再调用 `shell.openExternal`
-  - 页面内部重定向已由 `isNavigationAllowed` 放行
-  - 用户点击外链走 `setWindowOpenHandler`（target=_blank）转交系统浏览器
-  - 避免页面内部跨域导航被错误地弹出到外部浏览器
-- 新增 `isPrivateIp` 辅助函数：识别 10.x / 172.16-31.x / 192.168.x / 127.x / 169.254.x 私网段
+- fnid 解析重构：恢复通过 fnos.net API 解析真实服务器地址
+- 修复 fnid 在局域网跳出 app 框架的问题
+- 优化跨域导航处理
 
 ### v2.0.0
 
-- **重大修复**：解决 1.6.0 引入的 `setCertificateVerifyProc` 导致普通 https 站点（如 `your-domain.com`）SSL 握手被拒绝（`net_error -2 ERR_FAILED`）的严重问题
-  - 根因：session 级 `setCertificateVerifyProc` 对非 fnos.net / 非 IP 域名返回 `callback(-2)`，该值在 Electron 中代表"直接拒绝"而非"使用默认验证"，导致所有普通 https 站点无法加载
-  - 修复：移除 session 级 `setCertificateVerifyProc`，改用窗口级 `certificate-error` 事件，仅对 `*.fnos.net` 中转域名与 NAS 直连 IP 放行证书，普通 https 站点恢复 Chromium 默认验证
-- 地址解析方法 `resolveAccessUrl(input)` 稳定化：fnid / IP / 域名 / 完整地址统一入口，输出可直接浏览器打开的访问地址
-- 持久化改为记录用户原始输入（`serverInput`），每次启动重新走 `resolveAccessUrl` 确认本次访问地址，fnid 不再缓存解析结果
-- `ensureMusicSuffix` 统一补 `/music/`（带尾斜杠），避免服务器 301 重定向触发 `ERR_FAILED`
-- fnid 简化为直接构造中继地址 `https://{fnid}.fnos.net/music/`，移除 fnos.net API 解析与并发探测逻辑
-- 导航放行：`isNavigationAllowed` 放行 fnos.net 域内互转（子域名 ↔ 路径形式），避免中继 301 被拦截后丢到外部浏览器
-- 移除冗余的 `crypto` / `net` 依赖与 FNOS API 签名常量
-- 全链路加诊断日志（`[resolveAccessUrl]` / `[will-navigate]` / `[did-fail-load]` 等），便于排查加载问题
+- 修复普通 https 站点 SSL 握手被拒绝导致无法加载的问题
+- 统一地址解析入口，支持 fnid / IP / 域名 / 完整地址
+- fnid 改为直接走中继地址，移除 API 解析与并发探测
 
 ### v1.8.1
 
-- 修复访问 `https://your-domain.com/music` 卡在"连接中"的问题：服务器 301 重定向 `/music` → `/music/`，Electron `loadURL` 跟随重定向时出现 `ERR_FAILED`
-- `ensureMusicSuffix` 统一补成 `/music/`（带尾斜杠），fnid 中继地址同步改为 `/music/`，从源头避免 301 重定向
+- 修复访问 `/music` 卡在「连接中」的问题
 
 ### v1.8.0
 
-- 重构地址解析：新增统一方法 `resolveAccessUrl(input)`，fnid / IP / 完整地址统一入口
-- 持久化改为记录用户原始输入（`serverInput`），不再分 fnid / serverUrl 两个字段
-- 每次启动读取原始输入，重新走 `resolveAccessUrl` 确认本次访问地址
-- 移除 buildFnidUrl / loadFnid，fnid 分支并入统一解析方法
+- 重构地址解析为统一入口
 
 ### v1.7.0
 
-- 简化 fnid 访问逻辑：fnid 直接走中继地址 `https://{fnid}.fnos.net/music`，不再调用 fnos.net API 解析候选、不再探测公网/局域网地址
-- 移除 resolveFnid / probeCandidates 及相关签名常量，去掉 crypto / net 依赖
-- fnid 持久化 fnid 本身（非解析地址），下次启动直接用 fnid 构造中继地址加载
+- 简化 fnid 访问逻辑，直接走中继地址
 
 ### v1.6.0
 
-- 新增 fnid 登录支持：输入 fnid（如 `your-fnid`）自动通过 `fnos.net` API 解析真实服务器地址
-- 局域网 / 外网智能适配：fnid 解析返回多个候选地址（局域网 IP、公网 IP、relay 中转），并发探测选最优可达地址
-  - 局域网内优先用局域网 IP 直连（http，最快）
-  - 外网用公网 IP 直连（http）
-  - 都不通时用 fnos.net 中转（https 兜底）
-- 放行 `*.fnos.net` 中转域名与 NAS 直连 IP 的 SSL 证书验证，解决证书过期 / 自签证书导致无法加载的问题（`ERR_CERT_DATE_INVALID`）
-- fnid 解析与探测均加超时兜底，避免网络挂起导致界面卡在"连接中"
+- 新增 fnid 登录支持，自动解析真实服务器地址
+- 局域网 / 外网智能适配，优先局域网直连
+- 放行 fnos.net 与 NAS IP 的 SSL 证书验证
 
 ### v1.5.4
 
-- 服务器地址输入页面新增项目来源链接（`https://github.com/wbc389561407/fnmusic-exe`）
-- 调整地址输入逻辑：纯 IP 自动补 `http://` 与 `:5666` 默认端口；带协议 / 带端口则完全尊重用户输入
-- 应用单实例锁：重复双击桌面图标不再启动多个程序，改为聚焦到已有窗口
+- 服务器地址输入页新增项目来源链接
+- 纯 IP 自动补默认端口
+- 应用单实例锁，避免重复启动
 
 ### v1.5.3
 
-- 服务器地址输入不以 `/music` 或 `/music/` 结尾时，自动补全 `/music` 后缀，不再弹错误提示拦截
+- 地址不以 `/music` 结尾时自动补全后缀
 
 ### v1.5.2
 
-- 不带协议的地址默认按 `http` 访问，解决 http 流量被强制升级到 https 导致不通的问题
+- 不带协议的地址默认按 http 访问
 
 ### v1.5.1
 
-- 窗口启动背景与右上角叉叉按钮覆盖层底色改为透明，启动后顶部不再有黑色遮挡
-- 修复顶部拖拽条 padding 注入导致页面内部 `100vh` 布局被裁切、底部播放控制栏（上一首 / 下一首）溢出窗口边界的问题，改为纯浮动拖拽条不占布局空间
+- 窗口启动背景与叉叉按钮底色改为透明
+- 修复底部播放控制栏溢出窗口边界的问题
 
 ### v1.5.0
 
-- 服务器地址校验：输入地址必须以 `/music` 或 `/music/` 结尾，否则不跳转并提示用户
+- 服务器地址校验：必须以 `/music` 或 `/music/` 结尾
 
 ### v1.4.0
 
-- 隐藏窗口右上角最小化 / 最大化按钮，仅保留叉叉（最小化到托盘）
-- 托盘右键菜单新增「重置地址」：一键清空服务器地址配置与所有持久化存储（cookies / localStorage），回到设置页重新填写
+- 隐藏最小化 / 最大化按钮，仅保留叉叉
+- 托盘右键新增「重置地址」
 
 ### v1.3.0
 
-- 关闭 `backgroundThrottling`，解决窗口最小化 / 失焦后切歌中断的问题
-- 会话型 cookie 自动续期 1 年，避免重启后需要重新登录
-- 退出前 `flushStore` 强制落盘，兜底 1.5s 超时强制退出
-- 叉叉改为最小化到托盘，仅托盘右键「退出」真正关闭
-- 首次启动进入服务器地址设置页，配置后写入 `userData/config.json`
-- 菜单栏新增「切换服务器地址」「清除已保存地址并重置」
-- 站内导航限制：仅允许停留在已配置服务器站内，外链转交系统浏览器
-- 伪装为普通 Chrome 浏览器 User-Agent
-- 无边框窗口 + 顶部可拖拽条 + 右上角原生按钮覆盖层
-- NSIS 安装包：自定义安装路径、桌面快捷方式、开始菜单快捷方式
+- 关闭后台节流，解决最小化后切歌中断
+- 会话型 cookie 自动续期 1 年
+- 叉叉改为最小化到托盘
+- 首次启动进入服务器地址设置页
+- 站内导航限制，外链转交系统浏览器
+- UA 伪装为 Chrome 浏览器
+- NSIS 安装包
 
 ### v1.2.0
 
-- 基于 `persist:feiniu` 分区持久化 cookies / localStorage
+- 持久化 cookies / localStorage
 - 新增托盘图标与右键菜单
-- 服务器地址配置文件化，支持菜单栏切换
+- 服务器地址配置文件化
 
 ### v1.1.0
 
 - 基础无边框窗口外观
-- 注入顶部可拖拽区域，避免被覆盖层按钮遮挡
+- 注入顶部可拖拽区域
 
 ### v1.0.0
 
 - 项目立项
-- 基于 Electron 封装飞牛音乐网页，实现基础桌面客户端
+- 基于 Electron 封装飞牛音乐网页
 
 ## License
 
