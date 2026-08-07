@@ -4,6 +4,8 @@
   function init() {
     var form = document.getElementById('form');
     var input = document.getElementById('url');
+    var userEl = document.getElementById('username');
+    var passEl = document.getElementById('password');
     var btn = document.getElementById('btn');
     var msg = document.getElementById('msg');
 
@@ -50,11 +52,13 @@
         input.focus();
         return;
       }
+      var username = userEl ? userEl.value.trim() : '';
+      var password = passEl ? passEl.value : '';
       btn.disabled = true;
       btn.textContent = '连接中...';
       setMsg('');
       try {
-        var res = await window.serverBridge.submit(url);
+        var res = await window.serverBridge.submit({ url: url, username: username, password: password });
         if (!res || !res.ok) {
           setMsg((res && res.error) || '连接失败，请检查地址', true);
           btn.disabled = false;

@@ -3,8 +3,8 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('serverBridge', {
-  // 提交服务器地址，返回 Promise<{ ok: boolean, error?: string }>
-  submit: (url) => ipcRenderer.invoke('submit-server', url),
+  // 提交服务器地址（含可选用户名密码），返回 Promise<{ ok: boolean, error?: string }>
+  submit: (payload) => ipcRenderer.invoke('submit-server', payload),
   // 获取应用版本号（主进程 app.getVersion()，sandbox 下不能用 require 读 package.json）
   getVersion: () => ipcRenderer.invoke('get-app-version'),
   // 检查更新，返回 Promise<{ hasUpdate, latestVersion, releaseUrl, ... }>

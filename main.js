@@ -335,6 +335,86 @@ function applyWindowPreset(preset) {
   if (tray) tray.setContextMenu(buildTrayMenu());
 }
 
+// 自动登录：若当前在登录页且配置了用户名密码，自动填入 input 并点击 button
+// 在 did-finish-load（整页加载）和 did-navigate-in-page（SPA 路由切换）时都会触发
+function tryAutoLogin() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const cfg = readConfig();
+  if (!cfg.username || !cfg.password) return;
+  const creds = JSON.stringify({ u: cfg.username, p: cfg.password });
+  mainWindow.webContents.executeJavaScript(`
+    (function(){
+      var creds = ${creds};
+      // 仅在登录页执行
+      if (location.pathname.indexOf('/login') === -1) return;
+      // 防重复
+      if (window.__fnAutoLoginDone) return;
+      window.__fnAutoLoginDone = true;
+
+      var tries = 0;
+      var timer = setInterval(function(){
+        tries++;
+        if (tries > 20) { clearInterval(timer); return; }
+
+        // 登录表单：两个 input（用户名 + 密码）+ 一个 button
+        var inputs = document.querySelectorAll('input');
+        if (inputs.length < 2) return;
+        var userEl = inputs[0];
+        var passEl = inputs[1];
+        // 确保第二个是密码框（登录表单的标志）
+        if (passEl.type !== 'password') return;
+
+        // 使用原生 setter 触发框架（React/Vue）的 onChange
+        var setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+        setter.call(userEl, creds.u);
+        userEl.dispatchEvent(new Event('input', { bubbles: true }));
+        userEl.dispatchEvent(new Event('change', { bubbles: true }));
+        setter.call(passEl, creds.p);
+        passEl.dispatchEvent(new Event('input', { bubbles: true }));
+        passEl.dispatchEvent(new Event('change', { bubbles: true }));
+
+        clearInterval(timer);
+
+        // 点击登录按钮（type=submit 的那个，避免误点页面其他 button）
+        var btn = document.querySelector('button[type="submit"]') || document.querySelector('button');
+        if (btn) btn.click();
+      }, 400);
+    })();
+  `).catch(() => {});
+}
+
+// 自动播放：若配置开启，进入主界面后点击底部播放按钮
+// 仅点击播放按钮，不触发"随机漫游"等会切歌的兜底操作
+// 播放按钮可能异步加载，多次重试点击；检测到「暂停」按钮出现说明已开始播放
+function tryAutoPlay() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const cfg = readConfig();
+  if (!cfg.autoPlay) return;
+  mainWindow.webContents.executeJavaScript(`
+    (function(){
+      if (window.__fnAutoPlayStarted) return;
+      // 仅在主界面启动（登录页 pathname 含 /login）
+      if (location.pathname.indexOf('/login') !== -1) return;
+      window.__fnAutoPlayStarted = true;
+
+      var tries = 0;
+      var maxTries = 20;  // 最多重试 10 秒
+      var timer = setInterval(function(){
+        tries++;
+        if (tries > maxTries) { clearInterval(timer); return; }
+        // 检测到「暂停」按钮 = 已在播放，停止重试
+        if (document.querySelector('button[aria-label="暂停"]')) {
+          clearInterval(timer);
+          return;
+        }
+        // 点击「播放」按钮（播放器异步加载期间可能暂未出现）
+        var btn = document.querySelector('button[aria-label="播放"]');
+        if (btn) btn.click();
+      }, 500);
+    })();
+  `).catch(() => {});
+}
+
 function createWindow() {
   const preset = getSavedPreset();
   const { winWidth, winHeight, zoom } = calcWinSizeAndZoom(preset);
@@ -458,35 +538,16 @@ function createWindow() {
       })();
     `).catch(() => {});
 
-    // 自动播放：若配置开启，进入主界面后点击底部播放按钮
-    // 仅点击播放按钮，不触发"随机漫游"等会切歌的兜底操作
-    // 播放按钮可能异步加载，多次重试点击；检测到「暂停」按钮出现说明已开始播放
-    const cfg = readConfig();
-    if (cfg.autoPlay) {
-      mainWindow.webContents.executeJavaScript(`
-        (function(){
-          if (window.__fnAutoPlayStarted) return;
-          // 仅在主界面启动（登录页 pathname 含 /login）
-          if (location.pathname.indexOf('/login') !== -1) return;
-          window.__fnAutoPlayStarted = true;
+    // 自动播放 + 自动登录
+    tryAutoPlay();
+    tryAutoLogin();
+  });
 
-          var tries = 0;
-          var maxTries = 20;  // 最多重试 10 秒
-          var timer = setInterval(function(){
-            tries++;
-            if (tries > maxTries) { clearInterval(timer); return; }
-            // 检测到「暂停」按钮 = 已在播放，停止重试
-            if (document.querySelector('button[aria-label="暂停"]')) {
-              clearInterval(timer);
-              return;
-            }
-            // 点击「播放」按钮（播放器异步加载期间可能暂未出现）
-            var btn = document.querySelector('button[aria-label="播放"]');
-            if (btn) btn.click();
-          }, 500);
-        })();
-      `).catch(() => {});
-    }
+  // SPA 路由切换（如 cookie 失效跳到 /login，或自动登录后跳回主页）
+  // did-finish-load 不会触发，需监听 did-navigate-in-page
+  mainWindow.webContents.on('did-navigate-in-page', () => {
+    tryAutoLogin();
+    tryAutoPlay();
   });
 
   // 站内新窗口放行，站外用系统默认浏览器打开
@@ -655,15 +716,25 @@ function resetServerData() {
   getSession().clearStorageData().catch(() => {});
 }
 
-// 设置页提交服务器地址：统一走 resolveAccessUrl 解析，持久化用户原始输入
-ipcMain.handle('submit-server', async (event, rawUrl) => {
-  const input = (rawUrl || '').trim();
+// 设置页提交服务器地址（含可选用户名密码）：统一走 resolveAccessUrl 解析，持久化用户原始输入
+ipcMain.handle('submit-server', async (event, payload) => {
+  // 兼容：payload 可能是字符串（旧调用）或对象 { url, username, password }
+  const input = typeof payload === 'string'
+    ? payload.trim()
+    : (payload && payload.url ? payload.url : '').trim();
+  const username = (payload && typeof payload === 'object' ? (payload.username || '').trim() : '');
+  const password = (payload && typeof payload === 'object' ? (payload.password || '') : '');
+
   const { url, error } = await resolveAccessUrl(input);
   if (!url) {
     return { ok: false, error };
   }
-  // 持久化用户原始输入，下次启动重新解析
-  writeConfig({ serverInput: input });
+  // 持久化用户原始输入与登录凭据，下次启动重新解析
+  const cfg = readConfig();
+  cfg.serverInput = input;
+  if (username) cfg.username = username;
+  if (password) cfg.password = password;
+  writeConfig(cfg);
   applyServerUrl(url);
   return { ok: true };
 });

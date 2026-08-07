@@ -79,7 +79,7 @@ npm run dist:portable
 
 ## 版本号
 
-当前版本：**v2.2.3**
+当前版本：**v2.3.0**
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)（Semantic Versioning）：
 
@@ -90,6 +90,12 @@ npm run dist:portable
 版本号同步维护在 [package.json](package.json) 的 `version` 字段。
 
 ## 更新日志
+
+### v2.3.0
+
+- 新增登录态失效后自动重新登录：cookie 过期跳转到登录页时，自动填入已保存的用户名密码并提交
+- 设置页新增用户名、密码输入框，登录凭据一并持久化保存
+- 支持单页应用内路由切换时触发自动登录，无需整页刷新
 
 ### v2.2.1
 

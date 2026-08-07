@@ -199,6 +199,16 @@
           <input id="url" type="text" autofocus autocomplete="off"
                  placeholder="IP / 网址 / fnid（如 your-fnid）" spellcheck="false" />
         </div>
+        <div class="field">
+          <label for="username">用户名（可选）</label>
+          <input id="username" type="text" autocomplete="off" spellcheck="false"
+                 placeholder="登录失效时自动填入" />
+        </div>
+        <div class="field">
+          <label for="password">密码（可选）</label>
+          <input id="password" type="password" autocomplete="off"
+                 placeholder="登录失效时自动填入" />
+        </div>
         <button class="btn" id="btn" type="submit">连接</button>
         <div class="msg" id="msg"></div>
       </form>
