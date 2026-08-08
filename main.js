@@ -651,6 +651,28 @@ function createWindow() {
       })();
     `).catch(() => {});
 
+    // 隐藏页面内「退出登录」按钮（避免误触退出，登录态由本应用托管）
+    // 该按钮用 Tailwind 通用类无唯一标识，按文本内容匹配；SPA 异步渲染，用 MutationObserver 持续隐藏
+    mainWindow.webContents.executeJavaScript(`
+      (function(){
+        if (window.__fnHideLogoutStarted) return;
+        window.__fnHideLogoutStarted = true;
+        function hideLogout(){
+          var spans = document.querySelectorAll('span');
+          for (var i = 0; i < spans.length; i++) {
+            if (spans[i].textContent.trim() === '退出登录') {
+              var el = spans[i].closest('button');
+              if (el && el.parentElement) el.parentElement.style.display = 'none';
+            }
+          }
+        }
+        hideLogout();
+        new MutationObserver(hideLogout).observe(document.documentElement, {
+          childList: true, subtree: true
+        });
+      })();
+    `).catch(() => {});
+
     // 自动播放 + 自动登录
     tryAutoPlay();
     tryAutoLogin();
