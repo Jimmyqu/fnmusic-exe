@@ -1025,7 +1025,7 @@ function buildTrayMenu() {
           type: 'info',
           title: '关于飞牛音乐',
           message: '飞牛音乐',
-          detail: `版本：v${ver}\n\n基于 Electron 封装的飞牛音乐桌面客户端\n项目地址：https://github.com/wbc389561407/fnmusic-exe\n\n声明：个人自用项目，仅供学习交流。\n飞牛官方发布正式桌面客户端后，本项目将停止维护。`,
+          detail: `版本：v${ver}\n\n基于 Electron 封装的飞牛音乐桌面客户端\n项目地址：https://github.com/wbc389561407/fnmusic-exe\n\n声明：个人自用项目，仅供学习交流。`,
           buttons: ['确定'],
           icon: path.join(__dirname, 'build', 'icon.ico')
         });
