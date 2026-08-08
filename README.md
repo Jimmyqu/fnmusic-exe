@@ -79,7 +79,7 @@ npm run dist:portable
 
 ## 版本号
 
-当前版本：**v2.3.0**
+当前版本：**v2.3.4**
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)（Semantic Versioning）：
 
@@ -90,6 +90,12 @@ npm run dist:portable
 版本号同步维护在 [package.json](package.json) 的 `version` 字段。
 
 ## 更新日志
+
+### v2.3.4
+
+- 新增登录失败自动处理：用户名密码错误时自动跳回设置页并提示，不再卡在登录页
+- 隐藏页面内「退出登录」入口，退出操作统一由托盘菜单管理，避免误触退出
+- 未保存登录凭据时自动跳回设置页，引导用户重新填写
 
 ### v2.3.0
 
