@@ -39,6 +39,16 @@
       });
     }
 
+    // 读取并展示登录失败提示（由主进程 login-fail 流程写入，读取即清空）
+    if (typeof window.serverBridge.getLoginError === 'function') {
+      window.serverBridge.getLoginError().then(function (errMsg) {
+        if (errMsg) {
+          setMsg(errMsg, true);
+          if (passEl) passEl.focus();
+        }
+      });
+    }
+
     // 检查更新：调用 GitHub API 对比最新 release 版本，有更新则显示提示
     var updateTip = document.getElementById('update-tip');
     var updateLink = document.getElementById('update-link');

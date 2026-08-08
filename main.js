@@ -270,6 +270,8 @@ let tray = null;
 let isQuitting = false;
 // 自动登录失败检测定时器：登录后若仍停留在 /login 则跳回设置页
 let loginFailTimer = null;
+// 待展示给设置页的登录错误提示（设置页读取后清空）
+let pendingLoginError = '';
 
 // 基准窗口高度（在该高度下页面竖直方向无滚动条）
 const BASE_HEIGHT = 1150;
@@ -833,11 +835,19 @@ ipcMain.handle('get-saved-input', () => {
   return { url: cfg.serverInput || '', username: cfg.username || '' };
 });
 
-// 登录接口返回错误：渲染层 hook 检测到失败后通知主进程，立即跳回设置页
+// 登录接口返回错误：渲染层 hook 检测到失败后通知主进程，立即跳回设置页并带错误提示
 ipcMain.handle('login-fail', () => {
   if (loginFailTimer) { clearTimeout(loginFailTimer); loginFailTimer = null; }
+  pendingLoginError = '用户名或密码错误';
   loadSetup();
   return true;
+});
+
+// 设置页读取并清空待展示的登录错误提示
+ipcMain.handle('get-login-error', () => {
+  const msg = pendingLoginError;
+  pendingLoginError = '';
+  return msg;
 });
 
 // 设置页提交服务器地址（含可选用户名密码）：统一走 resolveAccessUrl 解析，持久化用户原始输入

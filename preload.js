@@ -14,7 +14,9 @@ contextBridge.exposeInMainWorld('serverBridge', {
   // 读取已保存的服务器地址与用户名（用于设置页预填）
   getSavedInput: () => ipcRenderer.invoke('get-saved-input'),
   // 登录接口返回错误时，渲染层通知主进程跳回设置页
-  notifyLoginFail: () => ipcRenderer.invoke('login-fail')
+  notifyLoginFail: () => ipcRenderer.invoke('login-fail'),
+  // 设置页读取并清空待展示的登录错误提示
+  getLoginError: () => ipcRenderer.invoke('get-login-error')
 });
 
 // 阻止页面默认拖拽打开文件的行为
