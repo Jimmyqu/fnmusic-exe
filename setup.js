@@ -62,6 +62,16 @@
       }
       var username = userEl ? userEl.value.trim() : '';
       var password = passEl ? passEl.value : '';
+      if (!username) {
+        setMsg('请输入用户名', true);
+        userEl.focus();
+        return;
+      }
+      if (!password) {
+        setMsg('请输入密码', true);
+        passEl.focus();
+        return;
+      }
       btn.disabled = true;
       btn.textContent = '连接中...';
       setMsg('');

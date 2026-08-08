@@ -268,6 +268,8 @@ let tray = null;
 // 是否处于「真正退出」流程：托盘右键退出 / window-all-closed 时置 true，
 // 用于拦截 close 事件，让叉叉走「最小化到托盘」而非退出
 let isQuitting = false;
+// 自动登录失败检测定时器：登录后若仍停留在 /login 则跳回设置页
+let loginFailTimer = null;
 
 // 基准窗口高度（在该高度下页面竖直方向无滚动条）
 const BASE_HEIGHT = 1150;
@@ -337,16 +339,27 @@ function applyWindowPreset(preset) {
 
 // 自动登录：若当前在登录页且配置了用户名密码，自动填入 input 并点击 button
 // 在 did-finish-load（整页加载）和 did-navigate-in-page（SPA 路由切换）时都会触发
+// - 未保存密码：跳回设置页让用户重新输入
+// - 已保存密码：自动登录，登录后若仍停留在 /login（cookie 未拿到/登录失败）则跳回设置页
 function tryAutoLogin() {
   if (!mainWindow || mainWindow.isDestroyed()) return;
+
+  // 仅在远程页面的登录页处理
+  let currentUrl = '';
+  try { currentUrl = mainWindow.webContents.getURL(); } catch {}
+  if (!/\/login/i.test(currentUrl)) return;
+
   const cfg = readConfig();
-  if (!cfg.username || !cfg.password) return;
+  // 没有保存的密码或用户名：回到设置页，可重新输入密码或全部重填
+  if (!cfg.username || !cfg.password) {
+    loadSetup();
+    return;
+  }
+
   const creds = JSON.stringify({ u: cfg.username, p: cfg.password });
   mainWindow.webContents.executeJavaScript(`
     (function(){
       var creds = ${creds};
-      // 仅在登录页执行
-      if (location.pathname.indexOf('/login') === -1) return;
       // 防重复
       if (window.__fnAutoLoginDone) return;
       window.__fnAutoLoginDone = true;
@@ -381,6 +394,19 @@ function tryAutoLogin() {
       }, 400);
     })();
   `).catch(() => {});
+
+  // 登录失败检测：8 秒后若仍停留在登录页（未拿到 cookie / 登录失败），跳回设置页
+  if (loginFailTimer) clearTimeout(loginFailTimer);
+  loginFailTimer = setTimeout(() => {
+    loginFailTimer = null;
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    try {
+      const url = mainWindow.webContents.getURL();
+      if (/\/login/i.test(url)) {
+        loadSetup();
+      }
+    } catch {}
+  }, 8000);
 }
 
 // 自动播放：若配置开启，进入主界面后点击底部播放按钮
