@@ -337,6 +337,88 @@ function applyWindowPreset(preset) {
   if (tray) tray.setContextMenu(buildTrayMenu());
 }
 
+// 注入登录失败检测：hook fetch / XHR，捕获登录接口的错误响应，命中后立即通知主进程跳回设置页
+// 不依赖自动登录，手动在登录页提交失败也会触发
+function injectLoginFailHook() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.executeJavaScript(`
+    (function(){
+      if (window.__fnLoginHookInstalled) return;
+      window.__fnLoginHookInstalled = true;
+
+      function notifyFail(){
+        try {
+          if (window.serverBridge && typeof window.serverBridge.notifyLoginFail === 'function') {
+            window.serverBridge.notifyLoginFail();
+          }
+        } catch {}
+      }
+
+      function isLoginError(status, body){
+        // HTTP 错误状态码
+        if (status >= 400 && status < 600) return true;
+        if (!body) return false;
+        var s = String(body).toLowerCase();
+        // 中文常见错误文案
+        if (s.indexOf('密码') >= 0 && (s.indexOf('错误') >= 0 || s.indexOf('不正确') >= 0)) return true;
+        if (s.indexOf('用户名') >= 0 && (s.indexOf('错误') >= 0 || s.indexOf('不存在') >= 0)) return true;
+        if (s.indexOf('登录失败') >= 0 || s.indexOf('账号或密码') >= 0) return true;
+        // 通用 JSON 错误结构
+        try {
+          var j = JSON.parse(body);
+          if (j && j.success === false) return true;
+          if (j && j.code !== undefined && j.code !== 0 && j.code !== 200 && j.code !== '0' && j.code !== '200' && (j.msg || j.message || j.error)) return true;
+        } catch {}
+        return false;
+      }
+
+      function isLoginUrl(url){
+        return /login/i.test(url || '');
+      }
+
+      // hook fetch
+      var origFetch = window.fetch;
+      if (typeof origFetch === 'function') {
+        window.fetch = function(){
+          var args = arguments;
+          var reqUrl = '';
+          try { reqUrl = (typeof args[0] === 'string') ? args[0] : (args[0] && args[0].url) || ''; } catch {}
+          return origFetch.apply(this, args).then(function(res){
+            try {
+              if (isLoginUrl(reqUrl) || isLoginUrl(res.url)) {
+                res.clone().text().then(function(body){
+                  if (isLoginError(res.status, body)) notifyFail();
+                }).catch(function(){});
+              }
+            } catch {}
+            return res;
+          });
+        };
+      }
+
+      // hook XHR
+      var origOpen = XMLHttpRequest.prototype.open;
+      XMLHttpRequest.prototype.open = function(method, url){
+        this.__fnReqUrl = url;
+        return origOpen.apply(this, arguments);
+      };
+      var origSend = XMLHttpRequest.prototype.send;
+      XMLHttpRequest.prototype.send = function(){
+        var self = this;
+        this.addEventListener('load', function(){
+          try {
+            if (isLoginUrl(self.__fnReqUrl)) {
+              var body = self.responseText || '';
+              if (isLoginError(self.status, body)) notifyFail();
+            }
+          } catch {}
+        });
+        return origSend.apply(this, arguments);
+      };
+    })();
+  `).catch(() => {});
+}
+
 // 自动登录：若当前在登录页且配置了用户名密码，自动填入 input 并点击 button
 // 在 did-finish-load（整页加载）和 did-navigate-in-page（SPA 路由切换）时都会触发
 // - 未保存密码：跳回设置页让用户重新输入
@@ -348,6 +430,9 @@ function tryAutoLogin() {
   let currentUrl = '';
   try { currentUrl = mainWindow.webContents.getURL(); } catch {}
   if (!/\/login/i.test(currentUrl)) return;
+
+  // 安装登录失败 hook（自动/手动登录接口返回错误都会立即跳回设置页）
+  injectLoginFailHook();
 
   const cfg = readConfig();
   // 没有保存的密码或用户名：回到设置页，可重新输入密码或全部重填
@@ -746,6 +831,13 @@ function logoutAccount() {
 ipcMain.handle('get-saved-input', () => {
   const cfg = readConfig();
   return { url: cfg.serverInput || '', username: cfg.username || '' };
+});
+
+// 登录接口返回错误：渲染层 hook 检测到失败后通知主进程，立即跳回设置页
+ipcMain.handle('login-fail', () => {
+  if (loginFailTimer) { clearTimeout(loginFailTimer); loginFailTimer = null; }
+  loadSetup();
+  return true;
 });
 
 // 设置页提交服务器地址（含可选用户名密码）：统一走 resolveAccessUrl 解析，持久化用户原始输入
