@@ -706,15 +706,21 @@ function loadSetup() {
   }
 }
 
-// 重置：清空服务器地址配置与所有持久化存储（cookies / localStorage 等），回到设置页重新填写
-function resetServerData() {
-  try {
-    fs.unlinkSync(getConfigPath());
-  } catch {}
+// 退出登录：清除 cookies（登录态）与已保存的密码，保留服务器地址等其它配置，回到设置页
+function logoutAccount() {
+  const cfg = readConfig();
+  delete cfg.password;
+  writeConfig(cfg);
+  getSession().clearStorageData({ storages: ['cookies'] }).catch(() => {});
   allowedOrigin = null;
   loadSetup();
-  getSession().clearStorageData().catch(() => {});
 }
+
+// 返回已保存的服务器地址与用户名，供设置页预填（退出登录后保留输入历史）
+ipcMain.handle('get-saved-input', () => {
+  const cfg = readConfig();
+  return { url: cfg.serverInput || '', username: cfg.username || '' };
+});
 
 // 设置页提交服务器地址（含可选用户名密码）：统一走 resolveAccessUrl 解析，持久化用户原始输入
 ipcMain.handle('submit-server', async (event, payload) => {
@@ -876,9 +882,9 @@ function buildTrayMenu() {
     },
     { type: 'separator' },
     {
-      label: '重置地址',
+      label: '退出登录',
       click: () => {
-        resetServerData();
+        logoutAccount();
         showMainWindow();
       }
     },

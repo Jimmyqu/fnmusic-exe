@@ -10,7 +10,9 @@ contextBridge.exposeInMainWorld('serverBridge', {
   // 检查更新，返回 Promise<{ hasUpdate, latestVersion, releaseUrl, ... }>
   checkUpdate: () => ipcRenderer.invoke('check-update'),
   // 最小化到托盘（叉叉按钮调用）
-  minimizeToTray: () => ipcRenderer.invoke('minimize-to-tray')
+  minimizeToTray: () => ipcRenderer.invoke('minimize-to-tray'),
+  // 读取已保存的服务器地址与用户名（用于设置页预填）
+  getSavedInput: () => ipcRenderer.invoke('get-saved-input')
 });
 
 // 阻止页面默认拖拽打开文件的行为

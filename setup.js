@@ -31,6 +31,14 @@
       });
     }
 
+    // 预填已保存的服务器地址与用户名（退出登录后保留输入历史，密码不回填）
+    if (typeof window.serverBridge.getSavedInput === 'function') {
+      window.serverBridge.getSavedInput().then(function (saved) {
+        if (saved && saved.url && input) input.value = saved.url;
+        if (saved && saved.username && userEl) userEl.value = saved.username;
+      });
+    }
+
     // 检查更新：调用 GitHub API 对比最新 release 版本，有更新则显示提示
     var updateTip = document.getElementById('update-tip');
     var updateLink = document.getElementById('update-link');
