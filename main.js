@@ -494,6 +494,44 @@ function tryAutoLogin() {
   }, 8000);
 }
 
+// 登录成功进入主页后，自动点击一次「音乐库」导航项（跳过站点默认首页）
+// 仅在首次进入主页触发一次，避免后续干扰用户手动切换页面
+function tryClickLibrary() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  let currentUrl = '';
+  try { currentUrl = mainWindow.webContents.getURL(); } catch {}
+  // 仅在远程页面且非登录页处理
+  if (!/^https?:/i.test(currentUrl)) return;
+  if (/\/login/i.test(currentUrl)) return;
+  mainWindow.webContents.executeJavaScript(`
+    (function(){
+      if (window.__fnClickLibraryStarted) return;
+      window.__fnClickLibraryStarted = true;
+      var tries = 0;
+      var timer = setInterval(function(){
+        tries++;
+        if (tries > 30) { clearInterval(timer); return; } // 最多重试 15 秒
+        if (window.__fnClickLibraryDone) { clearInterval(timer); return; }
+        // 查找文案为「音乐库」的侧边栏导航项
+        var spans = document.querySelectorAll('span');
+        var target = null;
+        for (var i = 0; i < spans.length; i++) {
+          var s = spans[i];
+          if (s.textContent.trim() !== '音乐库') continue;
+          var box = s.closest('div[class*="nav"], li, a, [role="button"]') || s.parentElement;
+          if (!box || !box.querySelector('svg')) continue;
+          target = box;
+          break;
+        }
+        if (!target) return; // 导航未渲染，下次继续
+        window.__fnClickLibraryDone = true;
+        clearInterval(timer);
+        target.click();
+      }, 500);
+    })();
+  `).catch(() => {});
+}
+
 // 自动播放：若配置开启，进入主界面后点击底部播放按钮
 // 仅点击播放按钮，不触发"随机漫游"等会切歌的兜底操作
 // 播放按钮可能异步加载，多次重试点击；检测到「暂停」按钮出现说明已开始播放
@@ -672,61 +710,6 @@ function createWindow() {
       })();
     `).catch(() => {});
 
-    // 改造侧边栏「首页」导航项为「音乐库」：改文案、换图标、点击触发音乐库导航
-    // SPA 异步渲染会重建节点，用 MutationObserver 持续维护
-    mainWindow.webContents.executeJavaScript(`
-      (function(){
-        if (window.__fnHomeToLibraryStarted) return;
-        window.__fnHomeToLibraryStarted = true;
-        // 音乐库图标的 svg path（替换首页的房子图标）
-        var LIB_PATH = 'M11.25 3.5a1 1 0 110 2H5.1A1.1 1.1 0 004 6.6v12.3A1.1 1.1 0 005.1 20H18a2 2 0 002-2v-7.5a1 1 0 112 0V18a4 4 0 01-4 4H5.1A3.1 3.1 0 012 18.9V6.6a3.1 3.1 0 013.1-3.1h6.15zm9.534-.355a1 1 0 01.121 1.996l-1.81.11a.501.501 0 00-.461.407l-.98 5.253c0 .006-.003.012-.005.019l-.396 2.123a3.896 3.896 0 01-4.544 3.114l-.133-.025a3.761 3.761 0 01.554-7.454l2.924-.105.614-3.292a2.5 2.5 0 012.307-2.036l1.81-.11zm-7.582 7.542a1.76 1.76 0 00-.26 3.49l.134.024a1.896 1.896 0 002.211-1.516l.39-2.088-2.475.09z';
-
-        // 查找文案为指定文本的侧边栏导航项容器
-        // excludeTransformed=true 时跳过已被本脚本转换过的节点
-        function findNavItem(text, excludeTransformed){
-          var spans = document.querySelectorAll('span');
-          for (var i = 0; i < spans.length; i++) {
-            var s = spans[i];
-            if (s.textContent.trim() !== text) continue;
-            var box = s.closest('div[class*="nav"], li, a, [role="button"]') || s.parentElement;
-            if (!box || !box.querySelector('svg')) continue;
-            if (excludeTransformed && box.dataset.fnLibTransformed) continue;
-            return { box: box, span: s };
-          }
-          return null;
-        }
-
-        function transformHomeNav(){
-          var home = findNavItem('首页', false);
-          if (!home) return;
-          if (home.box.dataset.fnLibTransformed) return; // 已处理
-          home.box.dataset.fnLibTransformed = '1';
-
-          // 1. 改文案
-          home.span.textContent = '音乐库';
-
-          // 2. 换图标：替换 svg 内 path 的 d 属性
-          var homePath = home.box.querySelector('svg path');
-          if (homePath) homePath.setAttribute('d', LIB_PATH);
-
-          // 3. 拦截点击：捕获阶段阻止默认行为，改为点击真正的「音乐库」导航项
-          home.box.addEventListener('click', function(e){
-            e.preventDefault();
-            e.stopPropagation();
-            var lib = findNavItem('音乐库', true);
-            if (lib && lib.box) {
-              lib.box.click();
-            }
-          }, true);
-        }
-
-        transformHomeNav();
-        new MutationObserver(transformHomeNav).observe(document.documentElement, {
-          childList: true, subtree: true
-        });
-      })();
-    `).catch(() => {});
-
     // 隐藏页面内「退出登录」按钮（避免误触退出，登录态由本应用托管）
     // 该按钮用 Tailwind 通用类无唯一标识，按文本内容匹配；SPA 异步渲染，用 MutationObserver 持续隐藏
     mainWindow.webContents.executeJavaScript(`
@@ -749,7 +732,8 @@ function createWindow() {
       })();
     `).catch(() => {});
 
-    // 自动播放 + 自动登录
+    // 点击音乐库 + 自动播放 + 自动登录
+    tryClickLibrary();
     tryAutoPlay();
     tryAutoLogin();
   });
@@ -757,6 +741,7 @@ function createWindow() {
   // SPA 路由切换（如 cookie 失效跳到 /login，或自动登录后跳回主页）
   // did-finish-load 不会触发，需监听 did-navigate-in-page
   mainWindow.webContents.on('did-navigate-in-page', () => {
+    tryClickLibrary();
     tryAutoLogin();
     tryAutoPlay();
   });
