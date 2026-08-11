@@ -299,12 +299,10 @@ function getSavedPreset() {
 }
 
 // 计算指定档位的窗口尺寸与页面缩放比例
-// - 缩放比例仅按高度计算：zoom = winHeight / BASE_HEIGHT
-//   保证等效视口高度 = 基准高度，竖直方向无滚动条
+// - 缩放比例固定 100%，保证页面按原始尺寸显示
 function calcWinSizeAndZoom(preset) {
   const p = WIN_PRESETS[preset] || WIN_PRESETS.small;
-  const zoom = snapToZoomStep(p.height / BASE_HEIGHT);
-  return { winWidth: p.width, winHeight: p.height, zoom };
+  return { winWidth: p.width, winHeight: p.height, zoom: 1.0 };
 }
 
 // 浏览器固定缩放档位（百分比），缩放只能取这些值保证字体清晰
@@ -567,17 +565,13 @@ function createWindow() {
     mainWindow.show();
   });
 
-  // 窗口高度变化时动态调整页面缩放，保证竖直方向无滚动条
-  // 公式：zoom = 当前高度 / BASE_HEIGHT
+  // 窗口尺寸变化时保持页面缩放 100%，不再按高度动态调整
   let resizeTimer = null;
   mainWindow.on('resize', () => {
     if (resizeTimer) clearTimeout(resizeTimer);
     resizeTimer = setTimeout(() => {
       if (mainWindow && !mainWindow.isDestroyed()) {
-        const [_, h] = mainWindow.getContentSize();
-        if (h > 0) {
-          mainWindow.webContents.setZoomFactor(snapToZoomStep(h / BASE_HEIGHT));
-        }
+        mainWindow.webContents.setZoomFactor(1.0);
       }
     }, 150);
   });
@@ -628,6 +622,8 @@ function createWindow() {
         height: 11px !important;
         display: block !important;
       }
+      /* 隐藏首页「最近添加」歌曲模块 */
+      .__fn-hide-recent { display: none !important; }
     `).catch(() => {});
     mainWindow.webContents.executeJavaScript(`
       (function(){
@@ -648,6 +644,31 @@ function createWindow() {
           }
         });
         document.documentElement.appendChild(b);
+      })();
+    `).catch(() => {});
+    // 隐藏首页「最近添加」歌曲模块（保留「最近添加」专辑模块）
+    // 区分依据：歌曲模块标题为「最近添加歌曲」，专辑模块标题为「最近添加专辑」
+    // SPA 异步渲染，用 MutationObserver 持续隐藏
+    mainWindow.webContents.executeJavaScript(`
+      (function(){
+        if (window.__fnHideRecentStarted) return;
+        window.__fnHideRecentStarted = true;
+        var KEY = '最近添加歌曲';
+        function hideRecent(){
+          var titles = document.querySelectorAll('h1,h2,h3,h4,h5,h6,[class*="title"],[class*="Title"]');
+          for (var i = 0; i < titles.length; i++) {
+            var t = titles[i];
+            if ((t.textContent || '').trim().indexOf(KEY) === -1) continue;
+            var box = t.closest('section, article, [class*="card"], [class*="block"], [class*="section"], [class*="module"]');
+            if (box && !box.classList.contains('__fn-hide-recent')) {
+              box.classList.add('__fn-hide-recent');
+            }
+          }
+        }
+        hideRecent();
+        new MutationObserver(hideRecent).observe(document.documentElement, {
+          childList: true, subtree: true
+        });
       })();
     `).catch(() => {});
 
