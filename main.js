@@ -337,6 +337,40 @@ function applyWindowPreset(preset) {
   if (tray) tray.setContextMenu(buildTrayMenu());
 }
 
+// ===== 启动页配置 =====
+// 登录成功进入主页后，自动点击侧边栏中匹配 navText 的导航项
+// - 'home'：不点击任何项，保持站点默认进入的首页
+// - 'playlist'：navText 取自 config.customPlaylist（用户在托盘菜单输入的歌单名称）
+// 固定项的 navText 与飞牛音乐侧边栏文案对应；若实际文案不同，点击不会命中（保持默认）
+const STARTUP_TARGETS = {
+  home:      { label: '首页',       navText: '' },
+  favorites: { label: '收藏',       navText: '收藏' },
+  recent:    { label: '最近',       navText: '最近' },
+  albums:    { label: '专辑',       navText: '专辑' },
+  artists:   { label: '歌手',       navText: '歌手' },
+  genres:    { label: '风格',       navText: '风格' },
+  library:   { label: '音乐库',     navText: '音乐库' },
+  playlist:  { label: '自定义歌单', navText: '' }
+};
+// 默认启动页：首页（不点击任何导航项，保持站点默认行为）
+const DEFAULT_STARTUP_TARGET = 'home';
+
+// 读取持久化的启动页 key，无配置或无效则返回默认值
+function getSavedStartupTarget() {
+  const cfg = readConfig();
+  const k = cfg.startupTarget;
+  return (k && STARTUP_TARGETS[k]) ? k : DEFAULT_STARTUP_TARGET;
+}
+
+// 设置启动页 key 并刷新托盘菜单
+function setStartupTarget(key) {
+  if (!STARTUP_TARGETS[key]) return;
+  const cfg = readConfig();
+  cfg.startupTarget = key;
+  writeConfig(cfg);
+  if (tray) tray.setContextMenu(buildTrayMenu());
+}
+
 // 注入登录失败检测：hook fetch / XHR，捕获登录接口的错误响应，命中后立即通知主进程跳回设置页
 // 不依赖自动登录，手动在登录页提交失败也会触发
 function injectLoginFailHook() {
@@ -494,42 +528,207 @@ function tryAutoLogin() {
   }, 8000);
 }
 
-// 登录成功进入主页后，自动点击一次「音乐库」导航项（跳过站点默认首页）
+// 登录成功进入主页后，自动点击一次启动页配置对应的侧边栏导航项
+// - 'home'：不点击任何项，保持站点默认首页
+// - 其他：查找侧边栏中文案匹配的导航项并点击
 // 仅在首次进入主页触发一次，避免后续干扰用户手动切换页面
-function tryClickLibrary() {
+function tryClickStartupNav() {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   let currentUrl = '';
   try { currentUrl = mainWindow.webContents.getURL(); } catch {}
   // 仅在远程页面且非登录页处理
   if (!/^https?:/i.test(currentUrl)) return;
   if (/\/login/i.test(currentUrl)) return;
+
+  const cfg = readConfig();
+  const targetKey = cfg.startupTarget && STARTUP_TARGETS[cfg.startupTarget]
+    ? cfg.startupTarget
+    : DEFAULT_STARTUP_TARGET;
+  const target = STARTUP_TARGETS[targetKey];
+
+  // 计算需要匹配的导航文案
+  let navText = target.navText;
+  if (targetKey === 'playlist') {
+    navText = (cfg.customPlaylist || '').trim();
+  }
+  // 空文案（首页 / 未配置自定义歌单）：不点击任何项
+  if (!navText) return;
+
+  const navTextJson = JSON.stringify(navText);
   mainWindow.webContents.executeJavaScript(`
     (function(){
-      if (window.__fnClickLibraryStarted) return;
-      window.__fnClickLibraryStarted = true;
+      if (window.__fnClickStartupStarted) return;
+      window.__fnClickStartupStarted = true;
+      var NAV_TEXT = ${navTextJson};
       var tries = 0;
       var timer = setInterval(function(){
         tries++;
         if (tries > 30) { clearInterval(timer); return; } // 最多重试 15 秒
-        if (window.__fnClickLibraryDone) { clearInterval(timer); return; }
-        // 查找文案为「音乐库」的侧边栏导航项
+        if (window.__fnClickStartupDone) { clearInterval(timer); return; }
+        // 查找文案匹配的侧边栏导航项（带 svg 图标才算导航项，避免误点正文标题）
         var spans = document.querySelectorAll('span');
         var target = null;
         for (var i = 0; i < spans.length; i++) {
           var s = spans[i];
-          if (s.textContent.trim() !== '音乐库') continue;
+          if (s.textContent.trim() !== NAV_TEXT) continue;
           var box = s.closest('div[class*="nav"], li, a, [role="button"]') || s.parentElement;
           if (!box || !box.querySelector('svg')) continue;
           target = box;
           break;
         }
         if (!target) return; // 导航未渲染，下次继续
-        window.__fnClickLibraryDone = true;
+        window.__fnClickStartupDone = true;
         clearInterval(timer);
         target.click();
       }, 500);
     })();
   `).catch(() => {});
+}
+
+// 弹窗输入自定义歌单名称，保存后切换启动页为 'playlist'
+// 用独立 BrowserWindow 加载最简 data URL，主进程注入样式与表单
+// 用户输入并通过 window.close() 关闭后，主进程在 close 事件中读取 window.__promptResult
+function promptCustomPlaylist() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+
+  const currentVal = readConfig().customPlaylist || '';
+  const promptWin = new BrowserWindow({
+    width: 420,
+    height: 200,
+    parent: mainWindow,
+    modal: true,
+    frame: false,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    show: false,
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false
+    }
+  });
+
+  // 加载空页面，内容由主进程注入
+  promptWin.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(
+    '<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body></body></html>'
+  ));
+
+  promptWin.webContents.on('did-finish-load', () => {
+    promptWin.webContents.insertCSS(`
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      html, body {
+        height: 100%;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+        background: #1a1530;
+        color: #f2f2f7;
+        overflow: hidden;
+      }
+      .titlebar {
+        position: fixed; top: 0; left: 0; right: 0;
+        height: 32px;
+        -webkit-app-region: drag;
+      }
+      .wrap {
+        height: 100%;
+        padding: 28px 24px 18px;
+        display: flex;
+        flex-direction: column;
+      }
+      h2 { font-size: 15px; font-weight: 600; margin-bottom: 10px; }
+      .sub { font-size: 12px; color: #a89fc4; margin-bottom: 14px; }
+      input {
+        width: 100%;
+        padding: 10px 12px;
+        font-size: 14px;
+        color: #fff;
+        background: rgba(255,255,255,0.06);
+        border: 1px solid rgba(255,255,255,0.12);
+        border-radius: 8px;
+        outline: none;
+      }
+      input:focus { border-color: #b06ab3; background: rgba(255,255,255,0.1); }
+      .btns {
+        margin-top: 16px;
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+      }
+      button {
+        padding: 8px 18px;
+        font-size: 13px;
+        color: #fff;
+        background: rgba(255,255,255,0.08);
+        border: 1px solid rgba(255,255,255,0.12);
+        border-radius: 8px;
+        cursor: pointer;
+      }
+      button:hover { background: rgba(255,255,255,0.14); }
+      button.primary {
+        background: linear-gradient(135deg, #b06ab3, #4568dc);
+        border: none;
+      }
+    `).catch(() => {});
+
+    const currentValJson = JSON.stringify(currentVal);
+    promptWin.webContents.executeJavaScript(`
+      (function(){
+        window.__promptResult = null;
+        document.body.innerHTML =
+          '<div class="titlebar"></div>' +
+          '<div class="wrap">' +
+            '<h2>设置自定义歌单</h2>' +
+            '<div class="sub">启动时自动进入侧边栏中匹配该名称的歌单</div>' +
+            '<input id="input" type="text" placeholder="歌单名称" autofocus />' +
+            '<div class="btns">' +
+              '<button id="cancel">取消</button>' +
+              '<button id="ok" class="primary">确定</button>' +
+            '</div>' +
+          '</div>';
+        var input = document.getElementById('input');
+        input.value = ${currentValJson};
+        input.focus();
+        input.select();
+        function commit(){
+          var v = (input.value || '').trim();
+          window.__promptResult = v || null;
+          window.close();
+        }
+        document.getElementById('ok').addEventListener('click', commit);
+        document.getElementById('cancel').addEventListener('click', function(){
+          window.__promptResult = null;
+          window.close();
+        });
+        input.addEventListener('keydown', function(e){
+          if (e.key === 'Enter') commit();
+          else if (e.key === 'Escape') { window.__promptResult = null; window.close(); }
+        });
+      })();
+    `).catch(() => {});
+  });
+
+  promptWin.once('ready-to-show', () => {
+    promptWin.show();
+  });
+
+  // 首次 close 拦截：读取用户输入，写入配置并刷新托盘菜单；之后销毁窗口
+  let resolved = false;
+  promptWin.on('close', (e) => {
+    if (resolved) return;
+    e.preventDefault();
+    resolved = true;
+    promptWin.webContents.executeJavaScript('window.__promptResult')
+      .then((result) => {
+        if (result) {
+          const cfg = readConfig();
+          cfg.customPlaylist = result;
+          cfg.startupTarget = 'playlist';
+          writeConfig(cfg);
+          if (tray) tray.setContextMenu(buildTrayMenu());
+        }
+      })
+      .catch(() => {})
+      .finally(() => promptWin.destroy());
+  });
 }
 
 // 自动播放：若配置开启，进入主界面后点击底部播放按钮
@@ -732,8 +931,8 @@ function createWindow() {
       })();
     `).catch(() => {});
 
-    // 点击音乐库 + 自动播放 + 自动登录
-    tryClickLibrary();
+    // 切换到配置的启动页 + 自动播放 + 自动登录
+    tryClickStartupNav();
     tryAutoPlay();
     tryAutoLogin();
   });
@@ -741,7 +940,7 @@ function createWindow() {
   // SPA 路由切换（如 cookie 失效跳到 /login，或自动登录后跳回主页）
   // did-finish-load 不会触发，需监听 did-navigate-in-page
   mainWindow.webContents.on('did-navigate-in-page', () => {
-    tryClickLibrary();
+    tryClickStartupNav();
     tryAutoLogin();
     tryAutoPlay();
   });
@@ -1035,6 +1234,47 @@ function createTray() {
   tray.on('click', () => showMainWindow());
 }
 
+// 构建「启动页」子菜单：固定项为 radio，自定义歌单单列一项点击后弹窗输入
+function buildStartupTargetSubmenu() {
+  const currentKey = getSavedStartupTarget();
+  const cfg = readConfig();
+
+  // 固定选项（不含自定义歌单）
+  const fixed = Object.keys(STARTUP_TARGETS)
+    .filter((k) => k !== 'playlist')
+    .map((k) => ({
+      label: STARTUP_TARGETS[k].label,
+      type: 'radio',
+      checked: currentKey === k,
+      click: () => setStartupTarget(k)
+    }));
+
+  // 自定义歌单：label 显示当前已配置的名称，点击后弹窗输入并切换
+  const playlistLabel = currentKey === 'playlist' && cfg.customPlaylist
+    ? '自定义歌单：' + cfg.customPlaylist
+    : '自定义歌单...';
+
+  const items = [
+    ...fixed,
+    { type: 'separator' },
+    {
+      label: playlistLabel,
+      type: 'radio',
+      checked: currentKey === 'playlist',
+      click: () => {
+        // 总是弹窗，让用户可以重新输入或修改歌单名称
+        // 取消时不切换启动页（setStartupTarget 不会被调用）
+        // 但 Electron 已把该项标记为选中，需要刷新菜单恢复原状态
+        promptCustomPlaylist();
+        // 立即刷新托盘菜单：若用户取消，radio 状态恢复到原选项
+        if (tray) tray.setContextMenu(buildTrayMenu());
+      }
+    }
+  ];
+
+  return items;
+}
+
 // 构建托盘右键菜单（每次构建都读取最新状态，确保勾选正确）
 function buildTrayMenu() {
   return Menu.buildFromTemplate([
@@ -1090,6 +1330,10 @@ function buildTrayMenu() {
           click: () => applyWindowPreset('small')
         }
       ]
+    },
+    {
+      label: '启动页',
+      submenu: buildStartupTargetSubmenu()
     },
     { type: 'separator' },
     {
