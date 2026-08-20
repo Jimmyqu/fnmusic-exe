@@ -373,6 +373,39 @@ function setStartupTarget(key) {
   if (tray) tray.setContextMenu(buildTrayMenu());
 }
 
+// ===== 自动播放模式配置 =====
+// - off：不自动播放
+// - continue：点击底部播放按钮（恢复上次播放进度）
+// - playAll：启动页为歌单时点击「播放全部」；为音乐库时点击「随机漫游」
+// - random：启动页为歌单时点击「随机」；为音乐库时点击「随机漫游」
+const AUTO_PLAY_MODES = {
+  off:      { label: '关闭' },
+  continue: { label: '继续播放' },
+  playAll:  { label: '全部播放' },
+  random:   { label: '随机播放' }
+};
+const DEFAULT_AUTO_PLAY_MODE = 'off';
+
+// 读取自动播放模式，兼容旧版 autoPlay 布尔字段
+function getSavedAutoPlayMode() {
+  const cfg = readConfig();
+  if (cfg.autoPlayMode && AUTO_PLAY_MODES[cfg.autoPlayMode]) return cfg.autoPlayMode;
+  // 旧版 autoPlay: true 视为 continue
+  if (cfg.autoPlay === true) return 'continue';
+  return DEFAULT_AUTO_PLAY_MODE;
+}
+
+// 设置自动播放模式并刷新托盘菜单
+function setAutoPlayMode(mode) {
+  if (!AUTO_PLAY_MODES[mode]) return;
+  const cfg = readConfig();
+  cfg.autoPlayMode = mode;
+  // 清理旧字段，避免歧义
+  delete cfg.autoPlay;
+  writeConfig(cfg);
+  if (tray) tray.setContextMenu(buildTrayMenu());
+}
+
 // 注入登录失败检测：hook fetch / XHR，捕获登录接口的错误响应，命中后立即通知主进程跳回设置页
 // 不依赖自动登录，手动在登录页提交失败也会触发
 function injectLoginFailHook() {
@@ -592,13 +625,42 @@ function tryClickStartupNav() {
   `).catch(() => {});
 }
 
-// 自动播放：若配置开启，进入主界面后点击底部播放按钮
-// 仅点击播放按钮，不触发"随机漫游"等会切歌的兜底操作
-// 播放按钮可能异步加载，多次重试点击；检测到「暂停」按钮出现说明已开始播放
+// 自动播放：按配置模式与启动页选择不同按钮点击
+// - continue：点击底部「播放」按钮（恢复上次进度）
+// - playAll：启动页为歌单时点击「播放全部」；为音乐库时点击「随机漫游」
+// - random：启动页为歌单时点击「随机」；为音乐库时点击「随机漫游」
+// - 其他启动页（首页/收藏等）：playAll / random 退化为点击底部「播放」按钮
+// 播放按钮可能异步加载，多次重试；检测到「暂停」按钮出现说明已在播放
 function tryAutoPlay() {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   const cfg = readConfig();
-  if (!cfg.autoPlay) return;
+  const mode = getSavedAutoPlayMode();
+  if (mode === 'off') return;
+
+  const startupKey = cfg.startupTarget && STARTUP_TARGETS[cfg.startupTarget]
+    ? cfg.startupTarget
+    : DEFAULT_STARTUP_TARGET;
+
+  // 计算需要点击的按钮 aria-label
+  // - continue：固定点击底部「播放」
+  // - playAll / random：根据启动页选择
+  //   - 歌单：playAll→播放全部，random→随机
+  //   - 音乐库：两者都点「随机漫游」
+  //   - 其他页面：退化为「播放」
+  let targetLabel = '播放';
+  if (mode === 'continue') {
+    targetLabel = '播放';
+  } else if (mode === 'playAll') {
+    if (startupKey === 'playlist') targetLabel = '播放全部';
+    else if (startupKey === 'library') targetLabel = '随机漫游';
+    else targetLabel = '播放';
+  } else if (mode === 'random') {
+    if (startupKey === 'playlist') targetLabel = '随机';
+    else if (startupKey === 'library') targetLabel = '随机漫游';
+    else targetLabel = '播放';
+  }
+
+  const labelJson = JSON.stringify(targetLabel);
   mainWindow.webContents.executeJavaScript(`
     (function(){
       if (window.__fnAutoPlayStarted) return;
@@ -606,6 +668,7 @@ function tryAutoPlay() {
       if (location.pathname.indexOf('/login') !== -1) return;
       window.__fnAutoPlayStarted = true;
 
+      var TARGET_LABEL = ${labelJson};
       var tries = 0;
       var maxTries = 20;  // 最多重试 10 秒
       var timer = setInterval(function(){
@@ -616,8 +679,8 @@ function tryAutoPlay() {
           clearInterval(timer);
           return;
         }
-        // 点击「播放」按钮（播放器异步加载期间可能暂未出现）
-        var btn = document.querySelector('button[aria-label="播放"]');
+        // 点击目标按钮（按钮可能异步加载，多次重试）
+        var btn = document.querySelector('button[aria-label="' + TARGET_LABEL + '"]');
         if (btn) btn.click();
       }, 500);
     })();
@@ -1186,6 +1249,17 @@ function buildStartupTargetSubmenu() {
   return items;
 }
 
+// 构建「自动播放」子菜单：4 个模式 radio 互斥选择
+function buildAutoPlaySubmenu() {
+  const currentMode = getSavedAutoPlayMode();
+  return Object.keys(AUTO_PLAY_MODES).map((k) => ({
+    label: AUTO_PLAY_MODES[k].label,
+    type: 'radio',
+    checked: currentMode === k,
+    click: () => setAutoPlayMode(k)
+  }));
+}
+
 // 构建托盘右键菜单（每次构建都读取最新状态，确保勾选正确）
 function buildTrayMenu() {
   return Menu.buildFromTemplate([
@@ -1206,17 +1280,8 @@ function buildTrayMenu() {
       }
     },
     {
-      label: '打开自动播放',
-      type: 'checkbox',
-      checked: !!readConfig().autoPlay,
-      click: (menuItem) => {
-        // 切换自动播放配置并持久化
-        const cfg = readConfig();
-        cfg.autoPlay = menuItem.checked;
-        writeConfig(cfg);
-        // 重新构建菜单刷新勾选状态
-        tray.setContextMenu(buildTrayMenu());
-      }
+      label: '自动播放',
+      submenu: buildAutoPlaySubmenu()
     },
     { type: 'separator' },
     {
