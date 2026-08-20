@@ -265,6 +265,8 @@ function ensureMusicSuffix(url) {
 
 let mainWindow = null;
 let tray = null;
+// 从远程页面读取到的歌单名称列表（用户创建的自定义歌单）
+let cachedPlaylists = [];
 // 是否处于「真正退出」流程：托盘右键退出 / window-all-closed 时置 true，
 // 用于拦截 close 事件，让叉叉走「最小化到托盘」而非退出
 let isQuitting = false;
@@ -565,14 +567,19 @@ function tryClickStartupNav() {
         tries++;
         if (tries > 30) { clearInterval(timer); return; } // 最多重试 15 秒
         if (window.__fnClickStartupDone) { clearInterval(timer); return; }
-        // 查找文案匹配的侧边栏导航项（带 svg 图标才算导航项，避免误点正文标题）
+        // 查找文案匹配的侧边栏导航项
+        // - 固定导航项：span 在带 svg 图标的容器内（div[class*="nav"] / li / a / [role="button"]）
+        // - 自定义歌单：span 在 button 内（无 svg，靠封面图区分），closest 直接命中 button
         var spans = document.querySelectorAll('span');
         var target = null;
         for (var i = 0; i < spans.length; i++) {
           var s = spans[i];
           if (s.textContent.trim() !== NAV_TEXT) continue;
-          var box = s.closest('div[class*="nav"], li, a, [role="button"]') || s.parentElement;
-          if (!box || !box.querySelector('svg')) continue;
+          // 优先匹配带 svg 的导航容器，其次匹配 button（歌单项）
+          var box = s.closest('div[class*="nav"], li, a, [role="button"], button') || s.parentElement;
+          if (!box) continue;
+          // button 元素直接视为可点击项（歌单）；其余容器要求带 svg（固定导航项）
+          if (box.tagName !== 'BUTTON' && !box.querySelector('svg')) continue;
           target = box;
           break;
         }
@@ -583,152 +590,6 @@ function tryClickStartupNav() {
       }, 500);
     })();
   `).catch(() => {});
-}
-
-// 弹窗输入自定义歌单名称，保存后切换启动页为 'playlist'
-// 用独立 BrowserWindow 加载最简 data URL，主进程注入样式与表单
-// 用户输入并通过 window.close() 关闭后，主进程在 close 事件中读取 window.__promptResult
-function promptCustomPlaylist() {
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-
-  const currentVal = readConfig().customPlaylist || '';
-  const promptWin = new BrowserWindow({
-    width: 420,
-    height: 200,
-    parent: mainWindow,
-    modal: true,
-    frame: false,
-    resizable: false,
-    minimizable: false,
-    maximizable: false,
-    show: false,
-    webPreferences: {
-      contextIsolation: true,
-      nodeIntegration: false
-    }
-  });
-
-  // 加载空页面，内容由主进程注入
-  promptWin.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(
-    '<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body></body></html>'
-  ));
-
-  promptWin.webContents.on('did-finish-load', () => {
-    promptWin.webContents.insertCSS(`
-      * { box-sizing: border-box; margin: 0; padding: 0; }
-      html, body {
-        height: 100%;
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
-        background: #1a1530;
-        color: #f2f2f7;
-        overflow: hidden;
-      }
-      .titlebar {
-        position: fixed; top: 0; left: 0; right: 0;
-        height: 32px;
-        -webkit-app-region: drag;
-      }
-      .wrap {
-        height: 100%;
-        padding: 28px 24px 18px;
-        display: flex;
-        flex-direction: column;
-      }
-      h2 { font-size: 15px; font-weight: 600; margin-bottom: 10px; }
-      .sub { font-size: 12px; color: #a89fc4; margin-bottom: 14px; }
-      input {
-        width: 100%;
-        padding: 10px 12px;
-        font-size: 14px;
-        color: #fff;
-        background: rgba(255,255,255,0.06);
-        border: 1px solid rgba(255,255,255,0.12);
-        border-radius: 8px;
-        outline: none;
-      }
-      input:focus { border-color: #b06ab3; background: rgba(255,255,255,0.1); }
-      .btns {
-        margin-top: 16px;
-        display: flex;
-        justify-content: flex-end;
-        gap: 8px;
-      }
-      button {
-        padding: 8px 18px;
-        font-size: 13px;
-        color: #fff;
-        background: rgba(255,255,255,0.08);
-        border: 1px solid rgba(255,255,255,0.12);
-        border-radius: 8px;
-        cursor: pointer;
-      }
-      button:hover { background: rgba(255,255,255,0.14); }
-      button.primary {
-        background: linear-gradient(135deg, #b06ab3, #4568dc);
-        border: none;
-      }
-    `).catch(() => {});
-
-    const currentValJson = JSON.stringify(currentVal);
-    promptWin.webContents.executeJavaScript(`
-      (function(){
-        window.__promptResult = null;
-        document.body.innerHTML =
-          '<div class="titlebar"></div>' +
-          '<div class="wrap">' +
-            '<h2>设置自定义歌单</h2>' +
-            '<div class="sub">启动时自动进入侧边栏中匹配该名称的歌单</div>' +
-            '<input id="input" type="text" placeholder="歌单名称" autofocus />' +
-            '<div class="btns">' +
-              '<button id="cancel">取消</button>' +
-              '<button id="ok" class="primary">确定</button>' +
-            '</div>' +
-          '</div>';
-        var input = document.getElementById('input');
-        input.value = ${currentValJson};
-        input.focus();
-        input.select();
-        function commit(){
-          var v = (input.value || '').trim();
-          window.__promptResult = v || null;
-          window.close();
-        }
-        document.getElementById('ok').addEventListener('click', commit);
-        document.getElementById('cancel').addEventListener('click', function(){
-          window.__promptResult = null;
-          window.close();
-        });
-        input.addEventListener('keydown', function(e){
-          if (e.key === 'Enter') commit();
-          else if (e.key === 'Escape') { window.__promptResult = null; window.close(); }
-        });
-      })();
-    `).catch(() => {});
-  });
-
-  promptWin.once('ready-to-show', () => {
-    promptWin.show();
-  });
-
-  // 首次 close 拦截：读取用户输入，写入配置并刷新托盘菜单；之后销毁窗口
-  let resolved = false;
-  promptWin.on('close', (e) => {
-    if (resolved) return;
-    e.preventDefault();
-    resolved = true;
-    promptWin.webContents.executeJavaScript('window.__promptResult')
-      .then((result) => {
-        if (result) {
-          const cfg = readConfig();
-          cfg.customPlaylist = result;
-          cfg.startupTarget = 'playlist';
-          writeConfig(cfg);
-          if (tray) tray.setContextMenu(buildTrayMenu());
-        }
-      })
-      .catch(() => {})
-      .finally(() => promptWin.destroy());
-  });
 }
 
 // 自动播放：若配置开启，进入主界面后点击底部播放按钮
@@ -928,6 +789,50 @@ function createWindow() {
         new MutationObserver(hideLogout).observe(document.documentElement, {
           childList: true, subtree: true
         });
+      })();
+    `).catch(() => {});
+
+    // 持续读取侧边栏自定义歌单列表并上报主进程（供托盘菜单展示）
+    // 歌单按钮特征：button 内含封面 img（src 带 coverId=playlist_）和名称 span
+    mainWindow.webContents.executeJavaScript(`
+      (function(){
+        if (window.__fnPlaylistObserverStarted) return;
+        window.__fnPlaylistObserverStarted = true;
+        function readPlaylists(){
+          var seen = {};
+          var texts = [];
+          // 歌单封面图 src 含 coverId=playlist_，由此定位歌单按钮
+          var imgs = document.querySelectorAll('img[src*="coverId=playlist_"]');
+          for (var i = 0; i < imgs.length; i++) {
+            var btn = imgs[i].closest('button');
+            if (!btn) continue;
+            var span = btn.querySelector('span');
+            if (!span) continue;
+            var text = span.textContent.trim();
+            if (!text || seen[text]) continue;
+            seen[text] = true;
+            texts.push(text);
+          }
+          return texts;
+        }
+        var lastReport = null;
+        function report(){
+          try {
+            var texts = readPlaylists();
+            var sig = texts.join('\\u0001');
+            if (sig === lastReport) return;
+            lastReport = sig;
+            if (window.serverBridge && typeof window.serverBridge.reportPlaylists === 'function') {
+              window.serverBridge.reportPlaylists(texts);
+            }
+          } catch {}
+        }
+        report();
+        var timer = null;
+        new MutationObserver(function(){
+          if (timer) return;
+          timer = setTimeout(function(){ timer = null; report(); }, 500);
+        }).observe(document.documentElement, { childList: true, subtree: true });
       })();
     `).catch(() => {});
 
@@ -1214,6 +1119,17 @@ ipcMain.handle('minimize-to-tray', () => {
   return true;
 });
 
+// 渲染层通过 MutationObserver 持续上报侧边栏歌单列表，主进程缓存并刷新托盘菜单
+ipcMain.on('playlists-updated', (_event, names) => {
+  const sorted = (Array.isArray(names) ? names : []).slice().sort();
+  const cached = cachedPlaylists.slice().sort();
+  cachedPlaylists = Array.isArray(names) ? names : [];
+  // 仅在列表变化时重建托盘菜单，避免无谓刷新
+  if (JSON.stringify(sorted) !== JSON.stringify(cached)) {
+    if (tray) tray.setContextMenu(buildTrayMenu());
+  }
+});
+
 // 创建托盘图标与右键菜单
 function createTray() {
   const iconPath = path.join(__dirname, 'build', 'icon.ico');
@@ -1234,7 +1150,7 @@ function createTray() {
   tray.on('click', () => showMainWindow());
 }
 
-// 构建「启动页」子菜单：固定项为 radio，自定义歌单单列一项点击后弹窗输入
+// 构建「启动页」子菜单：固定项与自定义歌单平级，全部为 radio 互斥选择
 function buildStartupTargetSubmenu() {
   const currentKey = getSavedStartupTarget();
   const cfg = readConfig();
@@ -1249,28 +1165,23 @@ function buildStartupTargetSubmenu() {
       click: () => setStartupTarget(k)
     }));
 
-  // 自定义歌单：label 显示当前已配置的名称，点击后弹窗输入并切换
-  const playlistLabel = currentKey === 'playlist' && cfg.customPlaylist
-    ? '自定义歌单：' + cfg.customPlaylist
-    : '自定义歌单...';
+  const items = [...fixed];
 
-  const items = [
-    ...fixed,
-    { type: 'separator' },
-    {
-      label: playlistLabel,
+  // 自定义歌单：从页面读取的歌单列表，与固定项平级列出
+  cachedPlaylists.forEach((name) => {
+    items.push({
+      label: name,
       type: 'radio',
-      checked: currentKey === 'playlist',
+      checked: currentKey === 'playlist' && cfg.customPlaylist === name,
       click: () => {
-        // 总是弹窗，让用户可以重新输入或修改歌单名称
-        // 取消时不切换启动页（setStartupTarget 不会被调用）
-        // 但 Electron 已把该项标记为选中，需要刷新菜单恢复原状态
-        promptCustomPlaylist();
-        // 立即刷新托盘菜单：若用户取消，radio 状态恢复到原选项
+        const c = readConfig();
+        c.customPlaylist = name;
+        c.startupTarget = 'playlist';
+        writeConfig(c);
         if (tray) tray.setContextMenu(buildTrayMenu());
       }
-    }
-  ];
+    });
+  });
 
   return items;
 }
