@@ -265,6 +265,8 @@ function ensureMusicSuffix(url) {
 
 let mainWindow = null;
 let tray = null;
+// 从远程页面读取到的歌单名称列表（用户创建的自定义歌单）
+let cachedPlaylists = [];
 // 是否处于「真正退出」流程：托盘右键退出 / window-all-closed 时置 true，
 // 用于拦截 close 事件，让叉叉走「最小化到托盘」而非退出
 let isQuitting = false;
@@ -343,6 +345,73 @@ function applyWindowPreset(preset) {
     applyAdaptiveZoom();
   }
   // 刷新托盘菜单勾选状态
+  if (tray) tray.setContextMenu(buildTrayMenu());
+}
+
+// ===== 启动页配置 =====
+// 登录成功进入主页后，自动点击侧边栏中匹配 navText 的导航项
+// - 'home'：不点击任何项，保持站点默认进入的首页
+// - 'playlist'：navText 取自 config.customPlaylist（用户在托盘菜单输入的歌单名称）
+// 固定项的 navText 与飞牛音乐侧边栏文案对应；若实际文案不同，点击不会命中（保持默认）
+const STARTUP_TARGETS = {
+  home:      { label: '首页',       navText: '' },
+  favorites: { label: '收藏',       navText: '收藏' },
+  recent:    { label: '最近',       navText: '最近' },
+  albums:    { label: '专辑',       navText: '专辑' },
+  artists:   { label: '歌手',       navText: '歌手' },
+  genres:    { label: '风格',       navText: '风格' },
+  library:   { label: '音乐库',     navText: '音乐库' },
+  playlist:  { label: '自定义歌单', navText: '' }
+};
+// 默认启动页：首页（不点击任何导航项，保持站点默认行为）
+const DEFAULT_STARTUP_TARGET = 'home';
+
+// 读取持久化的启动页 key，无配置或无效则返回默认值
+function getSavedStartupTarget() {
+  const cfg = readConfig();
+  const k = cfg.startupTarget;
+  return (k && STARTUP_TARGETS[k]) ? k : DEFAULT_STARTUP_TARGET;
+}
+
+// 设置启动页 key 并刷新托盘菜单
+function setStartupTarget(key) {
+  if (!STARTUP_TARGETS[key]) return;
+  const cfg = readConfig();
+  cfg.startupTarget = key;
+  writeConfig(cfg);
+  if (tray) tray.setContextMenu(buildTrayMenu());
+}
+
+// ===== 自动播放模式配置 =====
+// - off：不自动播放
+// - continue：点击底部播放按钮（恢复上次播放进度）
+// - playAll：启动页为歌单时点击「播放全部」；为音乐库时点击「随机漫游」
+// - random：启动页为歌单时点击「随机」；为音乐库时点击「随机漫游」
+const AUTO_PLAY_MODES = {
+  off:      { label: '关闭' },
+  continue: { label: '继续播放' },
+  playAll:  { label: '全部播放' },
+  random:   { label: '随机播放' }
+};
+const DEFAULT_AUTO_PLAY_MODE = 'off';
+
+// 读取自动播放模式，兼容旧版 autoPlay 布尔字段
+function getSavedAutoPlayMode() {
+  const cfg = readConfig();
+  if (cfg.autoPlayMode && AUTO_PLAY_MODES[cfg.autoPlayMode]) return cfg.autoPlayMode;
+  // 旧版 autoPlay: true 视为 continue
+  if (cfg.autoPlay === true) return 'continue';
+  return DEFAULT_AUTO_PLAY_MODE;
+}
+
+// 设置自动播放模式并刷新托盘菜单
+function setAutoPlayMode(mode) {
+  if (!AUTO_PLAY_MODES[mode]) return;
+  const cfg = readConfig();
+  cfg.autoPlayMode = mode;
+  // 清理旧字段，避免歧义
+  delete cfg.autoPlay;
+  writeConfig(cfg);
   if (tray) tray.setContextMenu(buildTrayMenu());
 }
 
@@ -503,37 +572,61 @@ function tryAutoLogin() {
   }, 8000);
 }
 
-// 登录成功进入主页后，自动点击一次「音乐库」导航项（跳过站点默认首页）
+// 登录成功进入主页后，自动点击一次启动页配置对应的侧边栏导航项
+// - 'home'：不点击任何项，保持站点默认首页
+// - 其他：查找侧边栏中文案匹配的导航项并点击
 // 仅在首次进入主页触发一次，避免后续干扰用户手动切换页面
-function tryClickLibrary() {
+function tryClickStartupNav() {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   let currentUrl = '';
   try { currentUrl = mainWindow.webContents.getURL(); } catch {}
   // 仅在远程页面且非登录页处理
   if (!/^https?:/i.test(currentUrl)) return;
   if (/\/login/i.test(currentUrl)) return;
+
+  const cfg = readConfig();
+  const targetKey = cfg.startupTarget && STARTUP_TARGETS[cfg.startupTarget]
+    ? cfg.startupTarget
+    : DEFAULT_STARTUP_TARGET;
+  const target = STARTUP_TARGETS[targetKey];
+
+  // 计算需要匹配的导航文案
+  let navText = target.navText;
+  if (targetKey === 'playlist') {
+    navText = (cfg.customPlaylist || '').trim();
+  }
+  // 空文案（首页 / 未配置自定义歌单）：不点击任何项
+  if (!navText) return;
+
+  const navTextJson = JSON.stringify(navText);
   mainWindow.webContents.executeJavaScript(`
     (function(){
-      if (window.__fnClickLibraryStarted) return;
-      window.__fnClickLibraryStarted = true;
+      if (window.__fnClickStartupStarted) return;
+      window.__fnClickStartupStarted = true;
+      var NAV_TEXT = ${navTextJson};
       var tries = 0;
       var timer = setInterval(function(){
         tries++;
         if (tries > 30) { clearInterval(timer); return; } // 最多重试 15 秒
-        if (window.__fnClickLibraryDone) { clearInterval(timer); return; }
-        // 查找文案为「音乐库」的侧边栏导航项
+        if (window.__fnClickStartupDone) { clearInterval(timer); return; }
+        // 查找文案匹配的侧边栏导航项
+        // - 固定导航项：span 在带 svg 图标的容器内（div[class*="nav"] / li / a / [role="button"]）
+        // - 自定义歌单：span 在 button 内（无 svg，靠封面图区分），closest 直接命中 button
         var spans = document.querySelectorAll('span');
         var target = null;
         for (var i = 0; i < spans.length; i++) {
           var s = spans[i];
-          if (s.textContent.trim() !== '音乐库') continue;
-          var box = s.closest('div[class*="nav"], li, a, [role="button"]') || s.parentElement;
-          if (!box || !box.querySelector('svg')) continue;
+          if (s.textContent.trim() !== NAV_TEXT) continue;
+          // 优先匹配带 svg 的导航容器，其次匹配 button（歌单项）
+          var box = s.closest('div[class*="nav"], li, a, [role="button"], button') || s.parentElement;
+          if (!box) continue;
+          // button 元素直接视为可点击项（歌单）；其余容器要求带 svg（固定导航项）
+          if (box.tagName !== 'BUTTON' && !box.querySelector('svg')) continue;
           target = box;
           break;
         }
         if (!target) return; // 导航未渲染，下次继续
-        window.__fnClickLibraryDone = true;
+        window.__fnClickStartupDone = true;
         clearInterval(timer);
         target.click();
       }, 500);
@@ -541,13 +634,42 @@ function tryClickLibrary() {
   `).catch(() => {});
 }
 
-// 自动播放：若配置开启，进入主界面后点击底部播放按钮
-// 仅点击播放按钮，不触发"随机漫游"等会切歌的兜底操作
-// 播放按钮可能异步加载，多次重试点击；检测到「暂停」按钮出现说明已开始播放
+// 自动播放：按配置模式与启动页选择不同按钮点击
+// - continue：点击底部「播放」按钮（恢复上次进度）
+// - playAll：启动页为歌单时点击「播放全部」；为音乐库时点击「随机漫游」
+// - random：启动页为歌单时点击「随机」；为音乐库时点击「随机漫游」
+// - 其他启动页（首页/收藏等）：playAll / random 退化为点击底部「播放」按钮
+// 播放按钮可能异步加载，多次重试；检测到「暂停」按钮出现说明已在播放
 function tryAutoPlay() {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   const cfg = readConfig();
-  if (!cfg.autoPlay) return;
+  const mode = getSavedAutoPlayMode();
+  if (mode === 'off') return;
+
+  const startupKey = cfg.startupTarget && STARTUP_TARGETS[cfg.startupTarget]
+    ? cfg.startupTarget
+    : DEFAULT_STARTUP_TARGET;
+
+  // 计算需要点击的按钮 aria-label
+  // - continue：固定点击底部「播放」
+  // - playAll / random：根据启动页选择
+  //   - 歌单：playAll→播放全部，random→随机
+  //   - 音乐库：两者都点「随机漫游」
+  //   - 其他页面：退化为「播放」
+  let targetLabel = '播放';
+  if (mode === 'continue') {
+    targetLabel = '播放';
+  } else if (mode === 'playAll') {
+    if (startupKey === 'playlist') targetLabel = '播放全部';
+    else if (startupKey === 'library') targetLabel = '随机漫游';
+    else targetLabel = '播放';
+  } else if (mode === 'random') {
+    if (startupKey === 'playlist') targetLabel = '随机';
+    else if (startupKey === 'library') targetLabel = '随机漫游';
+    else targetLabel = '播放';
+  }
+
+  const labelJson = JSON.stringify(targetLabel);
   mainWindow.webContents.executeJavaScript(`
     (function(){
       if (window.__fnAutoPlayStarted) return;
@@ -555,6 +677,7 @@ function tryAutoPlay() {
       if (location.pathname.indexOf('/login') !== -1) return;
       window.__fnAutoPlayStarted = true;
 
+      var TARGET_LABEL = ${labelJson};
       var tries = 0;
       var maxTries = 20;  // 最多重试 10 秒
       var timer = setInterval(function(){
@@ -565,8 +688,8 @@ function tryAutoPlay() {
           clearInterval(timer);
           return;
         }
-        // 点击「播放」按钮（播放器异步加载期间可能暂未出现）
-        var btn = document.querySelector('button[aria-label="播放"]');
+        // 点击目标按钮（按钮可能异步加载，多次重试）
+        var btn = document.querySelector('button[aria-label="' + TARGET_LABEL + '"]');
         if (btn) btn.click();
       }, 500);
     })();
@@ -833,8 +956,52 @@ function createWindow() {
       })();
     `).catch(() => {});
 
-    // 点击音乐库 + 自动播放 + 自动登录
-    tryClickLibrary();
+    // 持续读取侧边栏自定义歌单列表并上报主进程（供托盘菜单展示）
+    // 歌单按钮特征：button 内含封面 img（src 带 coverId=playlist_）和名称 span
+    mainWindow.webContents.executeJavaScript(`
+      (function(){
+        if (window.__fnPlaylistObserverStarted) return;
+        window.__fnPlaylistObserverStarted = true;
+        function readPlaylists(){
+          var seen = {};
+          var texts = [];
+          // 歌单封面图 src 含 coverId=playlist_，由此定位歌单按钮
+          var imgs = document.querySelectorAll('img[src*="coverId=playlist_"]');
+          for (var i = 0; i < imgs.length; i++) {
+            var btn = imgs[i].closest('button');
+            if (!btn) continue;
+            var span = btn.querySelector('span');
+            if (!span) continue;
+            var text = span.textContent.trim();
+            if (!text || seen[text]) continue;
+            seen[text] = true;
+            texts.push(text);
+          }
+          return texts;
+        }
+        var lastReport = null;
+        function report(){
+          try {
+            var texts = readPlaylists();
+            var sig = texts.join('\\u0001');
+            if (sig === lastReport) return;
+            lastReport = sig;
+            if (window.serverBridge && typeof window.serverBridge.reportPlaylists === 'function') {
+              window.serverBridge.reportPlaylists(texts);
+            }
+          } catch {}
+        }
+        report();
+        var timer = null;
+        new MutationObserver(function(){
+          if (timer) return;
+          timer = setTimeout(function(){ timer = null; report(); }, 500);
+        }).observe(document.documentElement, { childList: true, subtree: true });
+      })();
+    `).catch(() => {});
+
+    // 切换到配置的启动页 + 自动播放 + 自动登录
+    tryClickStartupNav();
     tryAutoPlay();
     tryAutoLogin();
   });
@@ -842,7 +1009,7 @@ function createWindow() {
   // SPA 路由切换（如 cookie 失效跳到 /login，或自动登录后跳回主页）
   // did-finish-load 不会触发，需监听 did-navigate-in-page
   mainWindow.webContents.on('did-navigate-in-page', () => {
-    tryClickLibrary();
+    tryClickStartupNav();
     tryAutoLogin();
     tryAutoPlay();
   });
@@ -1146,6 +1313,17 @@ ipcMain.handle('toggle-pin', () => {
   return pinned;
 });
 
+// 渲染层通过 MutationObserver 持续上报侧边栏歌单列表，主进程缓存并刷新托盘菜单
+ipcMain.on('playlists-updated', (_event, names) => {
+  const sorted = (Array.isArray(names) ? names : []).slice().sort();
+  const cached = cachedPlaylists.slice().sort();
+  cachedPlaylists = Array.isArray(names) ? names : [];
+  // 仅在列表变化时重建托盘菜单，避免无谓刷新
+  if (JSON.stringify(sorted) !== JSON.stringify(cached)) {
+    if (tray) tray.setContextMenu(buildTrayMenu());
+  }
+});
+
 // 创建托盘图标与右键菜单
 function createTray() {
   const iconPath = path.join(__dirname, 'build', 'icon.ico');
@@ -1164,6 +1342,53 @@ function createTray() {
 
   // 单击托盘图标：显示/隐藏主窗口
   tray.on('click', () => showMainWindow());
+}
+
+// 构建「启动页」子菜单：固定项与自定义歌单平级，全部为 radio 互斥选择
+function buildStartupTargetSubmenu() {
+  const currentKey = getSavedStartupTarget();
+  const cfg = readConfig();
+
+  // 固定选项（不含自定义歌单）
+  const fixed = Object.keys(STARTUP_TARGETS)
+    .filter((k) => k !== 'playlist')
+    .map((k) => ({
+      label: STARTUP_TARGETS[k].label,
+      type: 'radio',
+      checked: currentKey === k,
+      click: () => setStartupTarget(k)
+    }));
+
+  const items = [...fixed];
+
+  // 自定义歌单：从页面读取的歌单列表，与固定项平级列出
+  cachedPlaylists.forEach((name) => {
+    items.push({
+      label: name,
+      type: 'radio',
+      checked: currentKey === 'playlist' && cfg.customPlaylist === name,
+      click: () => {
+        const c = readConfig();
+        c.customPlaylist = name;
+        c.startupTarget = 'playlist';
+        writeConfig(c);
+        if (tray) tray.setContextMenu(buildTrayMenu());
+      }
+    });
+  });
+
+  return items;
+}
+
+// 构建「自动播放」子菜单：4 个模式 radio 互斥选择
+function buildAutoPlaySubmenu() {
+  const currentMode = getSavedAutoPlayMode();
+  return Object.keys(AUTO_PLAY_MODES).map((k) => ({
+    label: AUTO_PLAY_MODES[k].label,
+    type: 'radio',
+    checked: currentMode === k,
+    click: () => setAutoPlayMode(k)
+  }));
 }
 
 // 构建托盘右键菜单（每次构建都读取最新状态，确保勾选正确）
@@ -1186,17 +1411,8 @@ function buildTrayMenu() {
       }
     },
     {
-      label: '打开自动播放',
-      type: 'checkbox',
-      checked: !!readConfig().autoPlay,
-      click: (menuItem) => {
-        // 切换自动播放配置并持久化
-        const cfg = readConfig();
-        cfg.autoPlay = menuItem.checked;
-        writeConfig(cfg);
-        // 重新构建菜单刷新勾选状态
-        tray.setContextMenu(buildTrayMenu());
-      }
+      label: '自动播放',
+      submenu: buildAutoPlaySubmenu()
     },
     { type: 'separator' },
     {
@@ -1221,6 +1437,10 @@ function buildTrayMenu() {
           click: () => applyWindowPreset('small')
         }
       ]
+    },
+    {
+      label: '启动页',
+      submenu: buildStartupTargetSubmenu()
     },
     { type: 'separator' },
     {
