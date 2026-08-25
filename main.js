@@ -699,8 +699,98 @@ function tryAutoPlay() {
 function createWindow() {
   const preset = getSavedPreset();
   const { winWidth, winHeight, zoom } = calcWinSizeAndZoom(preset);
-  mainWindow = new BrowserWindow({
-    width: winWidth,
+
+  // 任务栏缩略图工具栏按钮（悬停任务栏图标时出现）：上一首 / 播放暂停 / 下一首
+  // 手工编码 16x16 BGRA 位图（nativeImage 不支持 SVG dataURL），图形 10px 高、居中
+  const TB_SHAPES = {
+    // |◀ 上一首
+    prev: ['................','................','................','...xx.......x...','...xx......xx...','...xx.....xxx...','...xx....xxxx...','...xx...xxxxx...','...xx...xxxxx...','...xx....xxxx...','...xx.....xxx...','...xx......xx...','...xx.......x...','................','................','................'],
+    // ▶| 下一首
+    next: ['................','................','................','...x.......xx...','...xx......xx...','...xxx.....xx...','...xxxx....xx...','...xxxxx...xx...','...xxxxx...xx...','...xxxx....xx...','...xxx.....xx...','...xx......xx...','...x.......xx...','................','................','................'],
+    // ▶ 播放
+    play: ['................','................','................','.....x..........','.....xx.........','.....xxx........','.....xxxx.......','.....xxxxx......','.....xxxxx......','.....xxxx.......','.....xxx........','.....xx.........','.....x..........','................','................','................'],
+    // ⏸ 暂停
+    pause: ['................','................','................','.....xx..xx.....','.....xx..xx.....','.....xx..xx.....','.....xx..xx.....','.....xx..xx.....','.....xx..xx.....','.....xx..xx.....','.....xx..xx.....','.....xx..xx.....','.....xx..xx.....','................','................','................'],
+  };
+  function makeTbIcon(kind) {
+    const rows = TB_SHAPES[kind];
+    const w = 16, h = rows.length;
+    const buf = Buffer.alloc(w * h * 4, 0); // 全透明底
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < rows[y].length; x++) {
+        if (rows[y][x] === 'x') {
+          const i = (y * w + x) * 4;
+          buf[i] = buf[i + 1] = buf[i + 2] = buf[i + 3] = 255; // 不透明白
+        }
+      }
+    }
+    return nativeImage.createFromBitmap(buf, { width: w, height: h });
+  }
+  const tbIconCache = {};
+  function getTbIcon(kind) {
+    if (!tbIconCache[kind]) tbIconCache[kind] = makeTbIcon(kind);
+    return tbIconCache[kind];
+  }
+  function updateThumbar(playing) {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    mainWindow.setThumbarButtons([
+      {
+        tooltip: '上一首',
+        icon: getTbIcon('prev'),
+        click: () => clickPlayerBtn(['上一首', '上一步', '上一曲', 'prev', 'previous'])
+      },
+      {
+        tooltip: playing ? '暂停' : '播放',
+        icon: getTbIcon(playing ? 'pause' : 'play'),
+        click: () => clickPlayerBtn(playing ? ['暂停', 'pause'] : ['播放', 'play'])
+      },
+      {
+        tooltip: '下一首',
+        icon: getTbIcon('next'),
+        click: () => clickPlayerBtn(['下一首', '下一步', '下一曲', 'next'])
+      }
+    ]);
+  }
+  // 在页面里点击匹配 aria-label / title / class 的播放器按钮
+  function clickPlayerBtn(labels) {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    const arr = JSON.stringify(labels);
+    mainWindow.webContents.executeJavaScript(`
+      (function(){
+        var labels = ${arr};
+        // 先按 aria-label / title 精确匹配
+        for (var i = 0; i < labels.length; i++) {
+          var b = document.querySelector('button[aria-label="' + labels[i] + '"], [role="button"][aria-label="' + labels[i] + '"]');
+          if (b) { b.click(); return true; }
+        }
+        // 退而求其次：audio 元素直接控制（播放/暂停兜底）
+        var a = document.querySelector('audio');
+        if (a && labels.indexOf('暂停') !== -1 && !a.paused) { a.pause(); return true; }
+        if (a && labels.indexOf('播放') !== -1 && a.paused) { a.play(); return true; }
+        return false;
+      })();
+    `).catch(() => {});
+  }
+  // 轮询页面播放状态，同步任务栏缩略图按钮（播放/暂停图标切换）
+  let lastPlaying = null;
+  function pollPlayingState() {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    mainWindow.webContents.executeJavaScript(`
+      (function(){
+        if (document.querySelector('button[aria-label="暂停"]')) return true;
+        var a = document.querySelector('audio');
+        return a ? !a.paused : false;
+      })();
+    `).then(playing => {
+      if (playing !== lastPlaying) {
+        lastPlaying = playing;
+        updateThumbar(playing);
+      }
+    }).catch(() => {});
+  }
+  updateThumbar(false);
+  setInterval(pollPlayingState, 1500);
+  mainWindow = new BrowserWindow({  width: winWidth,
     height: winHeight,
     minWidth: 900,
     minHeight: 600,
@@ -726,12 +816,21 @@ function createWindow() {
   });
 
   // 每次启动强制使用计算出的窗口尺寸与页面缩放，避免系统记住上次调整后的大小
+  // 窗口隐藏到托盘再恢复后 Windows 会清掉缩略图工具栏：重新显示时强制重设
+  // （lastPlaying 不变时轮询不会触发重设）
+  mainWindow.on('show', () => {
+    lastPlaying = null;
+    pollPlayingState();
+  });
+  mainWindow.on('restore', () => {
+    lastPlaying = null;
+    pollPlayingState();
+  });
+
   mainWindow.once('ready-to-show', () => {
     mainWindow.setSize(winWidth, winHeight);
     applyAdaptiveZoom();
     mainWindow.show();
-    // 调试：打开开发者工具（排查注入样式问题后可删）
-    mainWindow.webContents.openDevTools({ mode: 'detach' });
   });
 
   // 窗口尺寸变化时按宽度自适应页面缩放（防抖，避免拖动过程频繁触发）
